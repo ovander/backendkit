@@ -10,11 +10,14 @@ import (
 	"github.com/ovander/backendkit/httpware"
 )
 
-func TestRecover_CatchesPanic(t *testing.T) {
-	logger := logrus.New()
-	logger.SetOutput(io_discard{})
+func newRecoverLogger() *logrus.Entry {
+	l := logrus.New()
+	l.SetOutput(io_discard{})
+	return logrus.NewEntry(l)
+}
 
-	handler := httpware.Recover(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestRecover_CatchesPanic(t *testing.T) {
+	handler := httpware.Recover(newRecoverLogger())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		panic("something went wrong")
 	}))
 
@@ -28,10 +31,7 @@ func TestRecover_CatchesPanic(t *testing.T) {
 }
 
 func TestRecover_PassthroughOnNoPanic(t *testing.T) {
-	logger := logrus.New()
-	logger.SetOutput(io_discard{})
-
-	handler := httpware.Recover(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := httpware.Recover(newRecoverLogger())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 

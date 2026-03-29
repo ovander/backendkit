@@ -9,7 +9,9 @@ import (
 
 // Recover returns a middleware that catches panics in downstream handlers,
 // logs the panic value and full stack trace, and responds with 500.
-func Recover(logger *logrus.Logger) func(http.Handler) http.Handler {
+// Pass a *logrus.Entry (not *logrus.Logger) so pre-attached fields such as
+// "service" and "env" appear in the panic log line.
+func Recover(logger *logrus.Entry) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
