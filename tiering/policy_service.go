@@ -1,6 +1,7 @@
 package tiering
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -51,8 +52,8 @@ func (s *PolicyService) SetCacheTTL(d time.Duration) { s.cacheTTL = d }
 
 // SeedDefaults inserts the supplied baseline policies with ON CONFLICT DO
 // NOTHING and invalidates the cache. Call once at startup.
-func (s *PolicyService) SeedDefaults(policies []FeaturePolicy) error {
-	if err := s.repo.SeedDefaults(policies); err != nil {
+func (s *PolicyService) SeedDefaults(ctx context.Context, policies []FeaturePolicy) error {
+	if err := s.repo.SeedDefaults(ctx, policies); err != nil {
 		return fmt.Errorf("feature policy seed: %w", err)
 	}
 	s.bust()
@@ -61,8 +62,8 @@ func (s *PolicyService) SeedDefaults(policies []FeaturePolicy) error {
 }
 
 // List returns all feature policies (from cache if fresh).
-func (s *PolicyService) List() ([]*FeaturePolicy, error) {
-	return s.all()
+func (s *PolicyService) List(ctx context.Context) ([]*FeaturePolicy, error) {
+	return s.all(ctx)
 }
 
 // UpdatePolicyRequest is the body for updating a single policy row.
@@ -75,8 +76,8 @@ type UpdatePolicyRequest struct {
 
 // UpdatePolicy lets an admin change a single policy row and immediately busts
 // the cache.
-func (s *PolicyService) UpdatePolicy(req UpdatePolicyRequest) (*FeaturePolicy, error) {
-	existing, err := s.repo.GetByFeature(req.Feature)
+func (s *PolicyService) UpdatePolicy(ctx context.Context, req UpdatePolicyRequest) (*FeaturePolicy, error) {
+	existing, err := s.repo.GetByFeature(ctx, req.Feature)
 	if err != nil || existing == nil {
 		return nil, fmt.Errorf("feature_policy %q not found", req.Feature)
 	}
@@ -89,7 +90,7 @@ func (s *PolicyService) UpdatePolicy(req UpdatePolicyRequest) (*FeaturePolicy, e
 	existing.Pro = req.Pro
 	existing.Enterprise = req.Enterprise
 
-	if err := s.repo.Upsert(existing); err != nil {
+	if err := s.repo.Upsert(ctx, existing); err != nil {
 		return nil, fmt.Errorf("save feature policy: %w", err)
 	}
 
@@ -100,8 +101,8 @@ func (s *PolicyService) UpdatePolicy(req UpdatePolicyRequest) (*FeaturePolicy, e
 
 // IsAllowed returns true when userPlan has access to the named feature.
 // Falls back to false (deny) on any error.
-func (s *PolicyService) IsAllowed(feature, userPlan string) bool {
-	rule, err := s.ruleFor(feature, userPlan)
+func (s *PolicyService) IsAllowed(ctx context.Context, feature, userPlan string) bool {
+	rule, err := s.ruleFor(ctx, feature, userPlan)
 	if err != nil || rule.Allowed == nil {
 		return false
 	}
@@ -110,8 +111,8 @@ func (s *PolicyService) IsAllowed(feature, userPlan string) bool {
 
 // NumericLimit returns the ceiling for the named feature under userPlan.
 // Returns -1 for unlimited, 0 when not found or on error.
-func (s *PolicyService) NumericLimit(feature, userPlan string) int {
-	rule, err := s.ruleFor(feature, userPlan)
+func (s *PolicyService) NumericLimit(ctx context.Context, feature, userPlan string) int {
+	rule, err := s.ruleFor(ctx, feature, userPlan)
 	if err != nil || rule.Limit == nil {
 		return 0
 	}
@@ -122,8 +123,8 @@ func (s *PolicyService) NumericLimit(feature, userPlan string) int {
 // Internals
 // ────────────────────────────────────────────────────────────────────────────
 
-func (s *PolicyService) ruleFor(feature, userPlan string) (TierRule, error) {
-	policies, err := s.all()
+func (s *PolicyService) ruleFor(ctx context.Context, feature, userPlan string) (TierRule, error) {
+	policies, err := s.all(ctx)
 	if err != nil {
 		return TierRule{}, err
 	}
@@ -145,7 +146,7 @@ func (s *PolicyService) ruleFor(feature, userPlan string) (TierRule, error) {
 }
 
 // all returns the cached policy list, refreshing from DB when stale.
-func (s *PolicyService) all() ([]*FeaturePolicy, error) {
+func (s *PolicyService) all(ctx context.Context) ([]*FeaturePolicy, error) {
 	// Fast path: read-lock check.
 	s.mu.RLock()
 	if time.Now().Before(s.cacheExpiry) && s.cached != nil {
@@ -161,7 +162,7 @@ func (s *PolicyService) all() ([]*FeaturePolicy, error) {
 		return s.cached, nil
 	}
 
-	policies, err := s.repo.List()
+	policies, err := s.repo.List(ctx)
 	if err != nil {
 		s.logger.WithError(err).Error("failed to refresh feature policy cache")
 		if s.cached != nil {

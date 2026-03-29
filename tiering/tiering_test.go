@@ -1,6 +1,7 @@
 package tiering_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -115,8 +116,10 @@ type fakeRepo struct {
 	policies []*tiering.FeaturePolicy
 }
 
-func (r *fakeRepo) List() ([]*tiering.FeaturePolicy, error) { return r.policies, nil }
-func (r *fakeRepo) GetByFeature(feature string) (*tiering.FeaturePolicy, error) {
+func (r *fakeRepo) List(_ context.Context) ([]*tiering.FeaturePolicy, error) {
+	return r.policies, nil
+}
+func (r *fakeRepo) GetByFeature(_ context.Context, feature string) (*tiering.FeaturePolicy, error) {
 	for _, p := range r.policies {
 		if p.Feature == feature {
 			return p, nil
@@ -124,7 +127,7 @@ func (r *fakeRepo) GetByFeature(feature string) (*tiering.FeaturePolicy, error) 
 	}
 	return nil, errors.New("not found")
 }
-func (r *fakeRepo) Upsert(p *tiering.FeaturePolicy) error {
+func (r *fakeRepo) Upsert(_ context.Context, p *tiering.FeaturePolicy) error {
 	for i, existing := range r.policies {
 		if existing.Feature == p.Feature {
 			r.policies[i] = p
@@ -134,9 +137,9 @@ func (r *fakeRepo) Upsert(p *tiering.FeaturePolicy) error {
 	r.policies = append(r.policies, p)
 	return nil
 }
-func (r *fakeRepo) SeedDefaults(policies []tiering.FeaturePolicy) error {
+func (r *fakeRepo) SeedDefaults(ctx context.Context, policies []tiering.FeaturePolicy) error {
 	for i := range policies {
-		_ = r.Upsert(&policies[i])
+		_ = r.Upsert(ctx, &policies[i])
 	}
 	return nil
 }
@@ -148,6 +151,7 @@ func newPolicyService(policies []*tiering.FeaturePolicy) *tiering.PolicyService 
 }
 
 func TestPolicyService_IsAllowed_AccessFeature(t *testing.T) {
+	ctx := context.Background()
 	yes := tiering.MarshalAccess(true)
 	no := tiering.MarshalAccess(false)
 
@@ -155,15 +159,16 @@ func TestPolicyService_IsAllowed_AccessFeature(t *testing.T) {
 		{Feature: "my_feature", FeatureType: tiering.FeatureTypeAccess, Freemium: no, Pro: yes, Enterprise: yes},
 	})
 
-	if svc.IsAllowed("my_feature", tiering.PlanFreemium) {
+	if svc.IsAllowed(ctx, "my_feature", tiering.PlanFreemium) {
 		t.Error("freemium should not have access")
 	}
-	if !svc.IsAllowed("my_feature", tiering.PlanPro) {
+	if !svc.IsAllowed(ctx, "my_feature", tiering.PlanPro) {
 		t.Error("pro should have access")
 	}
 }
 
 func TestPolicyService_NumericLimit(t *testing.T) {
+	ctx := context.Background()
 	svc := newPolicyService([]*tiering.FeaturePolicy{
 		{
 			Feature: "max_items", FeatureType: tiering.FeatureTypeNumericLimit,
@@ -171,20 +176,21 @@ func TestPolicyService_NumericLimit(t *testing.T) {
 		},
 	})
 
-	if got := svc.NumericLimit("max_items", tiering.PlanFreemium); got != 1 {
+	if got := svc.NumericLimit(ctx, "max_items", tiering.PlanFreemium); got != 1 {
 		t.Errorf("freemium limit = %d, want 1", got)
 	}
-	if got := svc.NumericLimit("max_items", tiering.PlanPro); got != 5 {
+	if got := svc.NumericLimit(ctx, "max_items", tiering.PlanPro); got != 5 {
 		t.Errorf("pro limit = %d, want 5", got)
 	}
-	if got := svc.NumericLimit("max_items", tiering.PlanEnterprise); got != -1 {
+	if got := svc.NumericLimit(ctx, "max_items", tiering.PlanEnterprise); got != -1 {
 		t.Errorf("enterprise limit = %d, want -1 (unlimited)", got)
 	}
 }
 
 func TestPolicyService_UnknownFeatureReturnsZero(t *testing.T) {
+	ctx := context.Background()
 	svc := newPolicyService(nil)
-	if svc.IsAllowed("no_such_feature", tiering.PlanPro) {
+	if svc.IsAllowed(ctx, "no_such_feature", tiering.PlanPro) {
 		t.Error("unknown feature should return false")
 	}
 }

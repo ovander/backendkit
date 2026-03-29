@@ -1,21 +1,23 @@
 package tiering
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/sirupsen/logrus"
 
+	"github.com/ovander/backendkit/apierror"
 	"github.com/ovander/backendkit/ctxutil"
 )
 
-// gateErrorResponse is the JSON body returned when plan access is denied.
-type gateErrorResponse struct {
-	Error        string `json:"error"`
-	Message      string `json:"message"`
+// UpgradeDetails carries the plan-upgrade context attached to a 403 response
+// from Gate. It is embedded in apierror.AppError.Details so the outer JSON
+// shape is consistent with all other error responses in the library:
+//
+//	{"error": {"code":"upgrade_required","message":"...","details":{...}}}
+type UpgradeDetails struct {
 	Plan         string `json:"plan"`
 	RequiredPlan string `json:"requiredPlan"`
-	UpgradeURL   string `json:"upgradeUrl"`
+	UpgradeURL   string `json:"upgradeUrl,omitempty"`
 }
 
 // Gate is an HTTP middleware that enforces plan requirements on route groups.
@@ -53,15 +55,16 @@ func (g *Gate) Require(minPlan string) func(http.Handler) http.Handler {
 					"required_plan": minPlan,
 				}).Warn("plan gate: upgrade required")
 
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusForbidden)
-				json.NewEncoder(w).Encode(gateErrorResponse{ //nolint:errcheck
-					Error:        "upgrade_required",
-					Message:      "This feature requires the " + minPlan + " plan or above",
-					Plan:         userPlan,
-					RequiredPlan: minPlan,
-					UpgradeURL:   g.upgradeURL,
-				})
+				(&apierror.AppError{
+					Code:       "upgrade_required",
+					StatusCode: http.StatusForbidden,
+					Message:    "This feature requires the " + minPlan + " plan or above",
+					Details: UpgradeDetails{
+						Plan:         userPlan,
+						RequiredPlan: minPlan,
+						UpgradeURL:   g.upgradeURL,
+					},
+				}).WriteJSON(w)
 				return
 			}
 

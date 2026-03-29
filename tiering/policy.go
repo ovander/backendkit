@@ -1,6 +1,7 @@
 package tiering
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 )
@@ -60,15 +61,18 @@ func MarshalLimit(n int) json.RawMessage {
 
 // PolicyRepository is the data-access interface that PolicyService depends on.
 // Implement it with your GORM/SQL repository.
+//
+// All methods accept a context.Context so implementations can propagate
+// cancellation, deadlines, and distributed tracing spans to the database.
 type PolicyRepository interface {
 	// List returns all feature policies.
-	List() ([]*FeaturePolicy, error)
+	List(ctx context.Context) ([]*FeaturePolicy, error)
 	// GetByFeature returns a single policy by its slug.
-	GetByFeature(feature string) (*FeaturePolicy, error)
+	GetByFeature(ctx context.Context, feature string) (*FeaturePolicy, error)
 	// Upsert inserts or updates a policy row.
-	Upsert(policy *FeaturePolicy) error
+	Upsert(ctx context.Context, policy *FeaturePolicy) error
 	// SeedDefaults inserts the supplied rows with ON CONFLICT DO NOTHING.
-	SeedDefaults(policies []FeaturePolicy) error
+	SeedDefaults(ctx context.Context, policies []FeaturePolicy) error
 }
 
 // PlanSelector is a function that picks the right JSON column from a
