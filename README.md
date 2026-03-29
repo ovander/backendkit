@@ -2,7 +2,10 @@
 
 Shared Go library for backend services that use [Socrate](https://github.com/your-org/socrate) as their OAuth2 provider.
 
-All packages are battle-tested — extracted verbatim from the Kerplan production backend and generalised for reuse.
+All packages are battle-tested — extracted from the Kerplan production backend and generalised for reuse across any Socrate-backed multi-tenant service.
+
+[![Go Reference](https://pkg.go.dev/badge/github.com/ovander/backendkit.svg)](https://pkg.go.dev/github.com/ovander/backendkit)
+[![CI](https://github.com/ovander/backendkit/actions/workflows/ci.yml/badge.svg)](https://github.com/ovander/backendkit/actions/workflows/ci.yml)
 
 ---
 
@@ -12,10 +15,9 @@ All packages are battle-tested — extracted verbatim from the Kerplan productio
 go get github.com/ovander/backendkit@latest
 ```
 
-Then replace the module path placeholders in your new project's `go.mod`:
-
 ```go
-module github.com/your-org/my-new-backend
+// go.mod
+module github.com/your-org/my-service
 
 require github.com/ovander/backendkit v0.1.0
 ```
@@ -26,75 +28,337 @@ require github.com/ovander/backendkit v0.1.0
 
 | Package | Purpose |
 |---------|---------|
-| `apierror` | Structured HTTP error types (`AppError`, `WriteJSON`) |
-| `pagination` | Query-param parsing and `PagedResponse` |
-| `ctxutil` | Typed context keys for Socrate claims (tenant, user, role, plan, logger, request-id) |
-| `httpware` | Chi-compatible middlewares: Timeout, BodyLimit, SecurityHeaders, Recover, RequestID, Logger, RateLimiter, RBAC |
-| `gormlogger` | GORM → logrus bridge |
-| `socrate` | Full Socrate API client (user CRUD, service-account token, magic links, activity logs) |
-| `jwtauth` | JWT RS256 validation middleware with JWKS cache |
-| `tiering` | Plan registry, tier gate middleware, feature policy model and service |
-| `aigateway` | Multi-provider AI client (OpenAI + Claude), `ExtractJSON` |
-| `ainarration` | Generic LRU+TTL narration cache and `CacheKey` helper |
+| [`apierror`](#apierror) | Structured HTTP error types (`AppError`, constructor functions) |
+| [`pagination`](#pagination) | Query-param parsing and `PagedResponse` |
+| [`ctxutil`](#ctxutil) | Typed context keys for Socrate claims (tenant, user, role, plan, logger, request-id) |
+| [`httpware`](#httpware) | Chi-compatible middlewares: Timeout, BodyLimit, SecurityHeaders, Recover, RequestID, Logger, RateLimiter, RBAC |
+| [`gormlogger`](#gormlogger) | GORM → logrus bridge with slow-query detection |
+| [`socrate`](#socrate) | Full Socrate API client (user CRUD, service-account token, magic links) |
+| [`jwtauth`](#jwtauth) | JWT RS256 validation middleware with JWKS cache and stale-key fallback |
+| [`tiering`](#tiering) | Plan registry, tier gate middleware, feature policy model and service |
+| [`aigateway`](#aigateway) | Multi-provider AI client (OpenAI + Claude), `ExtractJSON` |
+| [`ainarration`](#ainarration) | Generic LRU+TTL narration cache and `CacheKey` helper |
 
 ---
 
-## Quick examples
+## Architecture overview
 
-### Auth + rate limiting (chi router)
+A typical service wires the packages in three layers:
+
+```
+HTTP request
+    │
+    ▼
+┌────────────────────────────────────────────┐
+│  httpware middleware stack (chi router)     │
+│  RequestID → Logger → SecurityHeaders →    │
+│  Recover → Timeout → jwtauth → RateLimiter │
+└───────────────────┬────────────────────────┘
+                    │  context carries:
+                    │  tenant, user, role, plan, request-id, logger
+                    ▼
+┌────────────────────────────────────────────┐
+│  Route handlers                            │
+│  • tiering.Gate.Require(plan)              │
+│  • httpware.RBAC.Require(permission)       │
+│  • socrate.Client  (identity operations)   │
+│  • aigateway.Client (AI calls)             │
+│  • ainarration.NarrationCache (cache AI)   │
+└───────────────────┬────────────────────────┘
+                    │
+                    ▼
+┌────────────────────────────────────────────┐
+│  Data layer                                │
+│  • GORM + gormlogger                       │
+│  • tiering.PolicyService (feature flags)   │
+└────────────────────────────────────────────┘
+```
+
+---
+
+## Full integration example
+
+The following shows how to bootstrap a production chi router using the full middleware stack.
 
 ```go
+package main
+
 import (
+    "os"
+    "time"
+
     "github.com/go-chi/chi/v5"
+    "github.com/sirupsen/logrus"
+
     "github.com/ovander/backendkit/httpware"
     "github.com/ovander/backendkit/jwtauth"
     "github.com/ovander/backendkit/tiering"
 )
 
-auth := jwtauth.New(cfg.JWKSEndpoint, cfg.Issuer, logger)
-rl   := httpware.NewRateLimiter(20, 40)      // 20 rps, burst 40
-gate := tiering.NewGate(tiering.DefaultRegistry(), logger, "/settings/billing")
+func main() {
+    log := logrus.WithField("service", "my-service")
 
-r := chi.NewRouter()
-r.Use(httpware.RequestID)
-r.Use(httpware.Logger(baseLogger))
-r.Use(httpware.SecurityHeaders)
-r.Use(httpware.Recover(baseLogger))
-r.Use(auth.Handler)
-r.Use(rl.Handler)
+    // 1. Auth middleware — validates RS256 JWT, injects claims into context.
+    auth := jwtauth.New(
+        os.Getenv("SOCRATE_JWKS_URL"),
+        os.Getenv("SOCRATE_ISSUER"),
+        log,
+    )
+
+    // 2. Per-tenant rate limiter — 20 rps sustained, burst of 40.
+    rl := httpware.NewRateLimiter(20, 40)
+    defer rl.Stop()
+
+    // 3. Tier gate — uses the default freemium/pro/enterprise registry.
+    gate := tiering.NewGate(tiering.DefaultRegistry(), log, "/settings/billing")
+
+    r := chi.NewRouter()
+
+    // Global middleware (runs before auth).
+    r.Use(httpware.RequestID)
+    r.Use(httpware.Logger(log))
+    r.Use(httpware.SecurityHeaders)
+    r.Use(httpware.BodyLimit(4 * 1024 * 1024)) // 4 MB
+    r.Use(httpware.Recover(log))
+    r.Use(httpware.Timeout(30 * time.Second))
+
+    // Auth + rate limit (after context is populated).
+    r.Use(auth.Handler)
+    r.Use(rl.Handler)
+
+    // Public routes.
+    r.Get("/healthz", healthHandler)
+
+    // Pro-only routes.
+    r.Group(func(r chi.Router) {
+        r.Use(gate.Require(tiering.PlanPro))
+        r.Post("/ai/narrate", narrateHandler)
+    })
+
+    // Enterprise-only routes.
+    r.Group(func(r chi.Router) {
+        r.Use(gate.Require(tiering.PlanEnterprise))
+        r.Get("/admin/tenants", listTenantsHandler)
+    })
+}
+```
+
+---
+
+## Package reference
+
+### apierror
+
+Constructor functions for all common HTTP error shapes. Every constructor returns `*AppError` which implements `error` and writes itself as JSON.
+
+```go
+// In a handler:
+user, err := repo.GetByID(id)
+if errors.Is(err, gorm.ErrRecordNotFound) {
+    apierror.NotFound("user", id).WriteJSON(w)
+    return
+}
+apierror.Internal("database error").WriteJSON(w)
+```
+
+Available constructors: `NotFound`, `BadRequest`, `Unauthorized`, `Forbidden`, `Conflict`, `ValidationError`, `Internal`, `ServiceUnavailable`.
+
+---
+
+### ctxutil
+
+All Socrate JWT claims injected by `jwtauth` are available through typed helpers. Every `Get*` function is safe to call even when the value is absent — they return zero values (or `"freemium"` for plan).
+
+```go
+tenantID, ok := ctxutil.GetTenantID(ctx)   // uuid.UUID
+userID, ok   := ctxutil.GetUserID(ctx)     // uuid.UUID
+role         := ctxutil.GetUserRole(ctx)   // string
+plan         := ctxutil.GetUserPlan(ctx)   // string, default "freemium"
+email        := ctxutil.GetUserEmail(ctx)
+name         := ctxutil.GetUserName(ctx)
+requestID    := ctxutil.GetRequestID(ctx)
+logger       := ctxutil.GetLogger(ctx)     // *logrus.Entry, falls back to standard logger
+```
+
+---
+
+### httpware
+
+All middleware functions follow the standard `func(http.Handler) http.Handler` signature and are compatible with any `net/http`-based router.
+
+| Middleware | Constructor |
+|-----------|-------------|
+| Request ID | `httpware.RequestID` |
+| Structured logger | `httpware.Logger(entry)` |
+| Security headers | `httpware.SecurityHeaders` |
+| Body size limit | `httpware.BodyLimit(bytes)` |
+| Panic recovery | `httpware.Recover(logger)` |
+| Per-route timeout | `httpware.Timeout(d)` |
+| Per-tenant rate limit | `httpware.NewRateLimiter(rps, burst)` |
+| Role-based access | `httpware.NewRBAC(roleMap, logger)` |
+
+**RBAC — defining permissions:**
+
+```go
+const (
+    PermReadReport  httpware.Permission = "read:report"
+    PermWriteReport httpware.Permission = "write:report"
+)
+
+rbac := httpware.NewRBAC(httpware.RoleMap{
+    "viewer": {PermReadReport},
+    "editor": {PermReadReport, PermWriteReport},
+}, logger)
+
+r.With(rbac.Require(PermWriteReport)).Post("/reports", createReport)
+```
+
+**Nested timeouts:** `httpware.Timeout` strips the existing deadline before applying the new one, so inner routes can override the global default safely:
+
+```go
+r.Use(httpware.Timeout(10 * time.Second)) // global default
 
 r.Group(func(r chi.Router) {
-    r.Use(gate.Require(tiering.PlanPro))
-    r.Post("/ai/narrate", narrateHandler)
+    r.Use(httpware.Timeout(120 * time.Second)) // safe: replaces the 10 s deadline
+    r.Post("/export/pdf", exportPDF)
 })
 ```
 
-### Socrate client
+---
+
+### gormlogger
+
+Bridges GORM's internal logger to logrus. Slow queries are logged at Warn; `ErrRecordNotFound` is suppressed to Debug so it doesn't pollute production logs.
 
 ```go
-client, _ := socrate.NewClient(socrate.ClientConfig{
-    BaseURL:      "https://auth.example.com",
+db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+    Logger: gormlogger.New(
+        log.WithField("component", "db"),
+        gormlogger.Config{
+            SlowThreshold:  200 * time.Millisecond,
+            IgnoreNotFound: true,
+        },
+    ),
+})
+```
+
+---
+
+### socrate
+
+The client uses a dual-auth strategy. User-scoped calls forward the caller's JWT; service-account calls acquire a `client_credentials` token automatically and cache it until near-expiry.
+
+```go
+client, err := socrate.NewClient(socrate.ClientConfig{
+    BaseURL:      os.Getenv("SOCRATE_BASE_URL"),
     ClientID:     os.Getenv("SOCRATE_CLIENT_ID"),
     ClientSecret: os.Getenv("SOCRATE_CLIENT_SECRET"),
     AppID:        os.Getenv("SOCRATE_APP_ID"),
 })
 
-// List users (forwards caller's JWT):
-ctx = socrate.WithJWT(ctx, rawJWT)
+// User-scoped — store the JWT first:
+ctx = socrate.WithJWT(ctx, rawJWT) // raw token from jwtauth context
 users, err := client.ListUsers(ctx, "", 1, 20)
+user, err  := client.GetUser(ctx, userID)
 
-// Invite user (uses service-account token automatically):
-resp, err := client.InviteUserAsService(ctx, socrate.ServiceInviteRequest{
+// Service-account — token acquired automatically:
+err = client.InviteUserAsService(ctx, socrate.ServiceInviteRequest{
     Email: "new@example.com",
     Role:  "editor",
 })
+err = client.SendMagicLink(ctx, "user@example.com")
+
+// Conflict handling:
+if errors.Is(err, socrate.ErrUserAlreadyExists) {
+    // handle duplicate registration
+}
 ```
 
-### AI gateway
+---
+
+### jwtauth
+
+Validates RS256 JWTs, caches JWKS keys for 1 hour, and injects all Socrate claims into the request context. Stale keys are retained as fallback when the JWKS endpoint is temporarily unreachable.
+
+```go
+auth := jwtauth.New(
+    "https://auth.example.com/.well-known/jwks.json",
+    "https://auth.example.com",
+    logger,
+)
+r.Use(auth.Handler)
+
+// Downstream handlers read claims without importing jwtauth:
+tenantID, _ := ctxutil.GetTenantID(r.Context())
+plan        := ctxutil.GetUserPlan(r.Context())
+```
+
+---
+
+### tiering
+
+Three components that work together for plan-based feature gating.
+
+**PlanRegistry** — an ordered plan hierarchy with tier comparison:
+
+```go
+reg := tiering.DefaultRegistry() // freemium < pro < enterprise
+
+reg.TierAtLeast("pro", "freemium") // true
+reg.TierAtLeast("freemium", "pro") // false
+reg.Normalise("UNKNOWN")           // "freemium" (lowest tier)
+
+// Custom hierarchy:
+reg = tiering.NewPlanRegistry("starter", "growth", "enterprise")
+```
+
+**Gate** — HTTP middleware that blocks requests below a plan threshold:
+
+```go
+gate := tiering.NewGate(tiering.DefaultRegistry(), logger, "/billing")
+
+r.With(gate.Require(tiering.PlanPro)).Post("/ai/narrate", handler)
+// Freemium users receive 403 with {"error":"plan_required","upgradeUrl":"/billing"}
+```
+
+**PolicyService** — per-feature rules stored in Postgres, cached in-process for 5 minutes:
+
+```go
+// Seed baseline rules at startup:
+svc.SeedDefaults([]tiering.FeaturePolicy{
+    {
+        Feature: "ai_narration", Category: "ai", Label: "AI Narration",
+        FeatureType: tiering.FeatureTypeAccess,
+        Freemium:    tiering.MarshalAccess(false),
+        Pro:         tiering.MarshalAccess(true),
+        Enterprise:  tiering.MarshalAccess(true),
+    },
+    {
+        Feature: "export_limit", Category: "exports", Label: "Monthly Exports",
+        FeatureType: tiering.FeatureTypeNumericLimit,
+        Freemium:    tiering.MarshalLimit(5),
+        Pro:         tiering.MarshalLimit(50),
+        Enterprise:  tiering.MarshalLimit(-1), // -1 = unlimited
+    },
+})
+
+// In a handler:
+plan    := ctxutil.GetUserPlan(ctx)
+allowed := svc.IsAllowed("ai_narration", plan)
+limit   := svc.NumericLimit("export_limit", plan)
+```
+
+Implement `tiering.PolicyRepository` with your GORM repository to plug in persistence.
+
+---
+
+### aigateway
+
+Normalises OpenAI and Anthropic Claude into a single `Call(ctx, prompt) (string, error)` interface.
 
 ```go
 ai := aigateway.New(aigateway.Config{
-    Provider:   "claude",
+    Provider:   "claude",  // "claude" or "openai"
     APIKey:     os.Getenv("ANTHROPIC_API_KEY"),
     Model:      "claude-sonnet-4-6",
     MaxTokens:  2000,
@@ -102,19 +366,36 @@ ai := aigateway.New(aigateway.Config{
 }, logger)
 
 result, err := ai.Call(ctx, prompt)
+
+// Parse JSON embedded in an AI prose response:
+var data MyStruct
+err = aigateway.ExtractJSONInto(result, &data)
 ```
 
-### Narration cache
+For tests, `aigateway.ClientForTest(provider, apiKey, serverURL)` points both base URLs at an `httptest.Server` so AI-dependent handlers can be tested without a live API key.
+
+---
+
+### ainarration
+
+A generic LRU+TTL cache for AI narration results. `NarrationCacher` is an interface — implement it with a DB-backed layer for persistence across restarts.
 
 ```go
 cache := ainarration.NewNarrationCache(ainarration.DefaultCacheConfig())
+// DefaultCacheConfig: capacity=1000, TTL=15min
 
-key := ainarration.CacheKey("plan_narration", userRole, myContext)
+// Content-addressed key — same inputs always produce the same key:
+key := ainarration.CacheKey("plan_narration", userRole, myContextStruct)
+
 if out, ok := cache.Get(tenantID, key); ok {
-    return out // cached
+    return out.Narrative // served from cache
 }
-// … call AI …
-cache.Put(tenantID, key, &ainarration.NarrationOutput{Narrative: text})
+
+text, _ := ai.Call(ctx, prompt)
+cache.Put(tenantID, key, &ainarration.NarrationOutput{
+    Narrative: text,
+    Metadata:  map[string]any{"model": "claude-sonnet-4-6", "latency_ms": 340},
+})
 ```
 
 ---
@@ -122,16 +403,19 @@ cache.Put(tenantID, key, &ainarration.NarrationOutput{Narrative: text})
 ## First-time setup after cloning
 
 ```bash
-go mod tidy        # resolves and pins all dependencies into go.sum
-go test ./...      # run all tests
-go vet ./...       # static analysis
+go mod tidy          # resolve and pin all dependencies into go.sum
+go test ./...        # run all tests
+go test -race ./...  # race-detector pass
+go vet ./...         # static analysis
 ```
 
 ---
 
 ## Contributing
 
-1. Add your package under its own directory.
-2. Write table-driven tests with `*_test.go` files in the same package directory.
-3. Run `go test -race ./...` before opening a PR.
-4. All exported symbols need Go doc comments.
+1. Add your package under its own directory with a package-level doc comment.
+2. Write table-driven tests; place `_test.go` files in the same package directory.
+3. Add runnable examples in `example_test.go` — they appear on pkg.go.dev.
+4. All exported symbols must have Go doc comments that begin with the symbol name.
+5. Run `go test -race ./...` and `go vet ./...` before opening a PR.
+6. Keep packages decoupled — the only allowed cross-package imports within the library are: anything may import `ctxutil` and `apierror` (shared primitives). All other cross-package imports are prohibited.
