@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/ovander/backendkit/ctxutil"
 	"github.com/ovander/backendkit/socrate"
 )
 
@@ -40,9 +41,9 @@ func TestNewClient_RequiresClientID(t *testing.T) {
 
 func TestWithJWT_StoresAndRetrieves(t *testing.T) {
 	ctx := socrate.WithJWT(context.Background(), "tok123")
-	val := ctx.Value(socrate.JWTContextKey)
-	if val != "tok123" {
-		t.Errorf("expected tok123, got %v", val)
+	// WithJWT now delegates to ctxutil.WithRawJWT; verify via ctxutil.GetRawJWT.
+	if got := ctxutil.GetRawJWT(ctx); got != "tok123" {
+		t.Errorf("expected tok123, got %v", got)
 	}
 }
 

@@ -31,13 +31,9 @@ import (
 	"net/url"
 	"sync"
 	"time"
+
+	"github.com/ovander/backendkit/ctxutil"
 )
-
-// contextKey is an unexported type for context keys in this package.
-type contextKey string
-
-// JWTContextKey is the context key under which the user JWT is stored.
-const JWTContextKey contextKey = "socrate_jwt"
 
 // ErrUserAlreadyExists is returned by CreateUser / RegisterUser / InviteUserAsService
 // when Socrate responds with 409 Conflict.
@@ -107,14 +103,16 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 }
 
 // WithJWT stores a user JWT in ctx for forwarding to Socrate.
+// It delegates to ctxutil.WithRawJWT so the token is stored under the same
+// key regardless of whether it was set by jwtauth.Middleware or by this call.
 func WithJWT(ctx context.Context, jwt string) context.Context {
-	return context.WithValue(ctx, JWTContextKey, jwt)
+	return ctxutil.WithRawJWT(ctx, jwt)
 }
 
-// getJWT extracts the JWT stored by WithJWT.
+// getJWT extracts the JWT stored by WithJWT or injected by jwtauth.Middleware.
 func getJWT(ctx context.Context) (string, error) {
-	jwt, ok := ctx.Value(JWTContextKey).(string)
-	if !ok || jwt == "" {
+	jwt := ctxutil.GetRawJWT(ctx)
+	if jwt == "" {
 		return "", errors.New("socrate: no JWT in context")
 	}
 	return jwt, nil

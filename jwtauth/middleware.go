@@ -25,7 +25,6 @@ import (
 
 	"github.com/ovander/backendkit/apierror"
 	"github.com/ovander/backendkit/ctxutil"
-	"github.com/ovander/backendkit/socrate"
 )
 
 // SocrateClaims is the JWT claims structure emitted by Socrate.
@@ -137,8 +136,9 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 			ctx = ctxutil.WithUserPlan(ctx, claims.Plan)
 		}
 
-		// Store raw JWT so downstream can forward it to Socrate service calls.
-		ctx = socrate.WithJWT(ctx, token)
+		// Store raw JWT so downstream clients (e.g. socrate.Client) can forward
+		// it without re-parsing. Use ctxutil.GetRawJWT to retrieve it.
+		ctx = ctxutil.WithRawJWT(ctx, token)
 
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
