@@ -248,12 +248,19 @@ db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 
 The client uses a dual-auth strategy. User-scoped calls forward the caller's JWT; service-account calls acquire a `client_credentials` token automatically and cache it until near-expiry.
 
+> **⚠️ `AppID` is required for all service-account methods.**
+> Service-account tokens carry `sub=app:{id}` and cannot authenticate against
+> the admin-user routes that would normally resolve the app ID at runtime.
+> Always set `AppID` in `ClientConfig`; omitting it causes an immediate error
+> on the first service-account call (`InviteUserAsService`, `RegisterUser`,
+> `GetUserAsService`, `SendMagicLink`).
+
 ```go
 client, err := socrate.NewClient(socrate.ClientConfig{
     BaseURL:      os.Getenv("SOCRATE_BASE_URL"),
     ClientID:     os.Getenv("SOCRATE_CLIENT_ID"),
     ClientSecret: os.Getenv("SOCRATE_CLIENT_SECRET"),
-    AppID:        os.Getenv("SOCRATE_APP_ID"),
+    AppID:        os.Getenv("SOCRATE_APP_ID"), // required for service-account calls
 })
 
 // User-scoped — store the JWT first:
@@ -266,12 +273,40 @@ err = client.InviteUserAsService(ctx, socrate.ServiceInviteRequest{
     Email: "new@example.com",
     Role:  "editor",
 })
-err = client.SendMagicLink(ctx, "user@example.com")
 
 // Conflict handling:
 if errors.Is(err, socrate.ErrUserAlreadyExists) {
     // handle duplicate registration
 }
+```
+
+**Magic-link (passwordless) authentication**
+
+Only the app backend may trigger magic-link emails — end users cannot call this endpoint directly. `SendMagicLink` uses the service-account token and hits the M2M-only route on the Admin port (`POST /api/apps/{id}/service/magic-link`).
+
+```go
+// Trigger a passwordless login email from your backend (e.g. when the user
+// clicks "send me a login link" on your frontend).
+resp, err := client.SendMagicLink(ctx, "user@example.com")
+if err != nil {
+    if errors.Is(err, socrate.ErrMagicLinkRateLimited) {
+        // per-address limit: 5 requests / hour per email + app pair
+    }
+    return err
+}
+// resp.Message is always the same opaque string (enumeration resistance).
+//
+// resp.MagicURL is non-empty in development mode only.
+// Its format is: {issuer}/api/auth/magic-link/verify?token=<raw>&client_id=<id>
+// The verify endpoint is POST-only (GET would let email scanners consume the
+// single-use token before the user clicks). Your frontend must read the
+// ?token= and ?client_id= query parameters from the clicked URL and POST them:
+//
+//   POST /api/auth/magic-link/verify
+//   {"token": "<raw>", "client_id": "<client_id>"}
+//
+// On success Socrate returns the same token set as a normal login
+// (access_token, refresh_token, id_token).
 ```
 
 ---
