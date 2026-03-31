@@ -3,6 +3,7 @@ package socrate_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -59,7 +60,13 @@ func TestListUsers_Success(t *testing.T) {
 	srv, close := newTestServer(mux)
 	defer close()
 
-	c, _ := socrate.NewClient(socrate.ClientConfig{BaseURL: srv.URL, ClientID: "my-client"})
+	// AdminBaseURL must equal BaseURL in tests — both OAuth and admin routes
+	// are served by the same httptest.Server.
+	c, _ := socrate.NewClient(socrate.ClientConfig{
+		BaseURL:      srv.URL,
+		AdminBaseURL: srv.URL,
+		ClientID:     "my-client",
+	})
 	ctx := socrate.WithJWT(context.Background(), "user-token")
 	list, err := c.ListUsers(ctx, "", 1, 10)
 	if err != nil {
@@ -79,7 +86,7 @@ func TestGetUser_NotFound(t *testing.T) {
 	srv, close := newTestServer(mux)
 	defer close()
 
-	c, _ := socrate.NewClient(socrate.ClientConfig{BaseURL: srv.URL, ClientID: "cid", AppID: "1"})
+	c, _ := socrate.NewClient(socrate.ClientConfig{BaseURL: srv.URL, AdminBaseURL: srv.URL, ClientID: "cid", AppID: "1"})
 	ctx := socrate.WithJWT(context.Background(), "tok")
 	u, err := c.GetUser(ctx, "99")
 	if err != nil {
@@ -99,11 +106,85 @@ func TestCreateUser_ConflictReturnsErrUserAlreadyExists(t *testing.T) {
 	srv, close := newTestServer(mux)
 	defer close()
 
-	c, _ := socrate.NewClient(socrate.ClientConfig{BaseURL: srv.URL, ClientID: "cid", AppID: "1"})
+	c, _ := socrate.NewClient(socrate.ClientConfig{BaseURL: srv.URL, AdminBaseURL: srv.URL, ClientID: "cid", AppID: "1"})
 	ctx := socrate.WithJWT(context.Background(), "tok")
 	_, err := c.CreateUser(ctx, socrate.CreateUserRequest{Email: "dup@x.com", Role: "viewer"})
 	if err != socrate.ErrUserAlreadyExists {
 		t.Errorf("expected ErrUserAlreadyExists, got: %v", err)
+	}
+}
+
+func TestSendMagicLink_Success(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"access_token": "svc-tok",
+			"expires_in":   3600,
+			"token_type":   "Bearer",
+		})
+	})
+	mux.HandleFunc("/api/admin/apps", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(socrate.AppListResponse{
+			Apps: []socrate.App{{ID: 3, ClientID: "cid"}},
+		})
+	})
+	mux.HandleFunc("/api/apps/3/service/magic-link", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(socrate.MagicLinkResponse{
+			Message:  "If that email address is registered, a login link has been sent.",
+			MagicURL: "http://localhost/api/auth/magic-link/verify?token=abc123&client_id=cid",
+		})
+	})
+	srv, close := newTestServer(mux)
+	defer close()
+
+	c, _ := socrate.NewClient(socrate.ClientConfig{
+		BaseURL:      srv.URL,
+		AdminBaseURL: srv.URL,
+		ClientID:     "cid",
+		ClientSecret: "secret",
+	})
+	resp, err := c.SendMagicLink(context.Background(), "alice@example.com")
+	if err != nil {
+		t.Fatalf("SendMagicLink: %v", err)
+	}
+	if resp.Message == "" {
+		t.Error("expected non-empty message")
+	}
+	if resp.MagicURL == "" {
+		t.Error("expected MagicURL in dev-mode response")
+	}
+}
+
+func TestSendMagicLink_RateLimited(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"access_token": "svc-tok",
+			"expires_in":   3600,
+			"token_type":   "Bearer",
+		})
+	})
+	mux.HandleFunc("/api/apps/3/service/magic-link", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"too many requests, please try again later"}`, http.StatusTooManyRequests)
+	})
+	srv, close := newTestServer(mux)
+	defer close()
+
+	c, _ := socrate.NewClient(socrate.ClientConfig{
+		BaseURL:      srv.URL,
+		AdminBaseURL: srv.URL,
+		ClientID:     "cid",
+		ClientSecret: "secret",
+		AppID:        "3",
+	})
+	_, err := c.SendMagicLink(context.Background(), "alice@example.com")
+	if !errors.Is(err, socrate.ErrMagicLinkRateLimited) {
+		t.Errorf("expected ErrMagicLinkRateLimited, got: %v", err)
 	}
 }
 
@@ -128,8 +209,10 @@ func TestGetServiceToken_ExchangesCredentials(t *testing.T) {
 	srv, close := newTestServer(mux)
 	defer close()
 
+	// AdminBaseURL = BaseURL so the test server handles all routes.
 	c, _ := socrate.NewClient(socrate.ClientConfig{
 		BaseURL:      srv.URL,
+		AdminBaseURL: srv.URL,
 		ClientID:     "cid",
 		ClientSecret: "secret",
 	})

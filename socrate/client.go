@@ -1,23 +1,26 @@
 // Package socrate provides a typed client for the Socrate OAuth2 identity
 // provider used across all backends.
 //
-// Dual-auth strategy
+// # Dual-auth strategy
 //
-//   - User-scoped calls (ListUsers, GetUser, CreateUser, …): the caller's JWT
-//     must be stored in the context via WithJWT, and the client forwards it as
-//     the Authorization header.
-//   - Service-account calls (RegisterUser, InviteUserAsService, SendMagicLink,
-//     GetUserAsService, ListUsersAsService): the client exchanges
-//     ClientID + ClientSecret for a client_credentials token automatically and
-//     caches it until expiry.
+//   - User-scoped calls (ListUsers, GetUser, UpdateUserRole, DeleteUser, …):
+//     the caller's JWT must be present in the context (injected by jwtauth.Middleware
+//     or set manually via WithJWT). The client forwards it as the Authorization header.
+//   - Service-account calls (RegisterUser, InviteUserAsService, GetUserAsService):
+//     the client exchanges ClientID + ClientSecret for a client_credentials token
+//     automatically and caches it until near-expiry.
 //
-// Dual-port routing
+// # Dual-port routing
 //
-//	Socrate exposes two TCP ports:
-//	  8080 — user-facing API (requires user JWT with a numeric sub claim)
-//	  8081 — admin API (accepts client_credentials tokens; used for service calls)
+// Socrate exposes two TCP ports:
 //
-//	AdminBaseURL defaults to BaseURL with the host port replaced by 8081.
+//	8080 — OAuth/OIDC server (public-facing)
+//	         /oauth/token, /oauth/userinfo, /oauth/introspect, /oauth/revoke, …
+//	8081 — Admin API (internal; restrict at network level)
+//	         /api/admin/*, /api/apps/{id}/users/*, /api/apps/{id}/service/*
+//
+// AdminBaseURL defaults to BaseURL with the host port replaced by 8081.
+// All user-management and admin calls are routed to AdminBaseURL automatically.
 package socrate
 
 import (
@@ -39,11 +42,20 @@ import (
 // when Socrate responds with 409 Conflict.
 var ErrUserAlreadyExists = errors.New("user already exists in Socrate")
 
+// ErrMagicLinkRateLimited is returned by SendMagicLink when Socrate responds with
+// 429 Too Many Requests — the per-address limit (5 requests / hour) has been
+// reached for this email + app pair.
+var ErrMagicLinkRateLimited = errors.New("magic link rate limit reached, please try again later")
+
+// ────────────────────────────────────────────────────────────────────────────
+// Client
+// ────────────────────────────────────────────────────────────────────────────
+
 // Client is a Socrate API client.
 type Client struct {
-	baseURL      string
-	adminBaseURL string // Socrate admin port (8081)
-	clientID     string // OAuth client ID (used to resolve numeric app ID)
+	baseURL      string // OAuth port  (8080) — /oauth/* endpoints
+	adminBaseURL string // Admin port  (8081) — /api/admin/*, /api/apps/* endpoints
+	clientID     string // OAuth client ID
 	clientSecret string // OAuth client secret (client_credentials grant)
 
 	resolvedAppID string // lazily resolved numeric app ID
@@ -57,10 +69,10 @@ type Client struct {
 
 // ClientConfig holds the constructor options for Client.
 type ClientConfig struct {
-	BaseURL      string
-	AdminBaseURL string        // Socrate admin port URL; derived from BaseURL if empty
+	BaseURL      string        // OAuth port URL  (e.g. https://auth.example.com)
+	AdminBaseURL string        // Admin port URL  (e.g. https://auth.example.com:8081); derived from BaseURL if empty
 	ClientID     string        // OAuth client ID
-	ClientSecret string        // OAuth client secret
+	ClientSecret string        // OAuth client secret (required for service-account calls)
 	AppID        string        // Pre-resolved numeric app ID; skips runtime resolution when set
 	Timeout      time.Duration // HTTP client timeout; defaults to 30 s
 }
@@ -109,30 +121,12 @@ func WithJWT(ctx context.Context, jwt string) context.Context {
 	return ctxutil.WithRawJWT(ctx, jwt)
 }
 
-// getJWT extracts the JWT stored by WithJWT or injected by jwtauth.Middleware.
-func getJWT(ctx context.Context) (string, error) {
-	jwt := ctxutil.GetRawJWT(ctx)
-	if jwt == "" {
-		return "", errors.New("socrate: no JWT in context")
-	}
-	return jwt, nil
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 // Internal HTTP helpers
 // ────────────────────────────────────────────────────────────────────────────
 
-// doRequest forwards the user JWT from context.
-func (c *Client) doRequest(ctx context.Context, method, path string, body interface{}) (*http.Response, error) {
-	jwt, err := getJWT(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return c.doRequestWithToken(ctx, jwt, method, path, body)
-}
-
-// doRequestWithToken sends an authenticated request with an explicit token.
-func (c *Client) doRequestWithToken(ctx context.Context, token, method, path string, body interface{}) (*http.Response, error) {
+// doHTTP is the single low-level request builder. fullURL must be a complete URL.
+func (c *Client) doHTTP(ctx context.Context, token, method, fullURL string, body interface{}) (*http.Response, error) {
 	var bodyReader io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -141,8 +135,7 @@ func (c *Client) doRequestWithToken(ctx context.Context, token, method, path str
 		}
 		bodyReader = bytes.NewReader(b)
 	}
-
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, bodyReader)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -151,37 +144,93 @@ func (c *Client) doRequestWithToken(ctx context.Context, token, method, path str
 	return c.httpClient.Do(req)
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// App ID resolution
-// ────────────────────────────────────────────────────────────────────────────
+// oauthURL builds a full URL on the OAuth port (baseURL).
+func (c *Client) oauthURL(path string) string { return c.baseURL + path }
 
-// App represents an application registered in Socrate.
-type App struct {
-	ID       uint   `json:"id"`
-	Name     string `json:"name"`
-	ClientID string `json:"client_id"`
+// adminURL builds a full URL on the Admin port (adminBaseURL).
+func (c *Client) adminURL(path string) string { return c.adminBaseURL + path }
+
+// doWithJWT sends a request to fullURL forwarding the user JWT from context.
+func (c *Client) doWithJWT(ctx context.Context, method, fullURL string, body interface{}) (*http.Response, error) {
+	jwt := ctxutil.GetRawJWT(ctx)
+	if jwt == "" {
+		return nil, errors.New("socrate: no JWT in context — use WithJWT or jwtauth.Middleware")
+	}
+	return c.doHTTP(ctx, jwt, method, fullURL, body)
 }
 
-// AppListResponse is the payload returned by the apps list endpoint.
-type AppListResponse struct {
-	Apps []App `json:"apps"`
+// doWithServiceToken sends a request to fullURL using the cached service-account token.
+func (c *Client) doWithServiceToken(ctx context.Context, method, fullURL string, body interface{}) (*http.Response, error) {
+	tok, err := c.getServiceToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get service token: %w", err)
+	}
+	return c.doHTTP(ctx, tok, method, fullURL, body)
 }
 
+// readBody reads and closes the response body.
+func readBody(r *http.Response) ([]byte, error) {
+	defer r.Body.Close()
+	return io.ReadAll(r.Body)
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// App ID resolution  (uses Admin port — /api/admin/apps)
+// ────────────────────────────────────────────────────────────────────────────
+
+// getAppID resolves the numeric app ID for the configured clientID using the
+// caller's JWT. The result is cached after the first successful lookup.
 func (c *Client) getAppID(ctx context.Context) (string, error) {
 	if c.resolvedAppID != "" {
 		return c.resolvedAppID, nil
 	}
-	resp, err := c.doRequest(ctx, http.MethodGet, "/api/admin/apps", nil)
+	resp, err := c.doWithJWT(ctx, http.MethodGet, c.adminURL("/api/admin/apps"), nil)
 	if err != nil {
 		return "", fmt.Errorf("fetch apps: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("fetch apps failed HTTP %d: %s", resp.StatusCode, b)
+	return c.parseAppID(resp)
+}
+
+// getAppIDAsService resolves the numeric app ID using the service-account token.
+//
+// IMPORTANT: The Socrate Admin API at /api/admin/apps requires a human-admin
+// JWT, not a service-account token.  This fallback lookup therefore always
+// returns 401 in practice.  Callers MUST supply AppID in ClientConfig so the
+// value is cached on construction and this network call is never made.
+// If AppID is absent and the lookup fails with 401, a clear error is returned
+// rather than a confusing "invalid token claims" message.
+func (c *Client) getAppIDAsService(ctx context.Context) (string, error) {
+	if c.resolvedAppID != "" {
+		return c.resolvedAppID, nil
 	}
-	var result AppListResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	resp, err := c.doWithServiceToken(ctx, http.MethodGet, c.adminURL("/api/admin/apps"), nil)
+	if err != nil {
+		return "", fmt.Errorf("fetch apps: %w", err)
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		// Service-account tokens cannot authenticate against the admin-user
+		// endpoints.  Avoid this call entirely by setting AppID in ClientConfig.
+		return "", errors.New("socrate: AppID must be set in ClientConfig for service-account calls — " +
+			"the /api/admin/apps lookup requires an admin JWT, not a service-account token")
+	}
+	return c.parseAppID(resp)
+}
+
+func (c *Client) parseAppID(resp *http.Response) (string, error) {
+	b, err := readBody(resp)
+	if err != nil {
+		return "", fmt.Errorf("read apps response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("fetch apps HTTP %d: %s", resp.StatusCode, b)
+	}
+	var result struct {
+		Apps []struct {
+			ID       uint   `json:"id"`
+			ClientID string `json:"client_id"`
+		} `json:"apps"`
+	}
+	if err := json.Unmarshal(b, &result); err != nil {
 		return "", fmt.Errorf("decode apps: %w", err)
 	}
 	for _, app := range result.Apps {
@@ -193,53 +242,83 @@ func (c *Client) getAppID(ctx context.Context) (string, error) {
 	return "", fmt.Errorf("socrate: no app found for client_id %s", c.clientID)
 }
 
-func (c *Client) getAppIDWithToken(ctx context.Context, token string) (string, error) {
-	if c.resolvedAppID != "" {
-		return c.resolvedAppID, nil
+// ────────────────────────────────────────────────────────────────────────────
+// Service-account token management  (POST /oauth/token — OAuth port)
+// ────────────────────────────────────────────────────────────────────────────
+
+type tokenResponse struct {
+	AccessToken string `json:"access_token"`
+	ExpiresIn   int    `json:"expires_in"`
+	TokenType   string `json:"token_type"`
+}
+
+// getServiceToken returns a cached service-account token, refreshing it when
+// near-expiry. Thread-safe.
+func (c *Client) getServiceToken(ctx context.Context) (string, error) {
+	c.svcTokenMu.Lock()
+	defer c.svcTokenMu.Unlock()
+
+	if c.svcToken != "" && time.Now().Add(30*time.Second).Before(c.svcTokenExpiry) {
+		return c.svcToken, nil
 	}
-	resp, err := c.doRequestWithToken(ctx, token, http.MethodGet, "/api/admin/apps", nil)
+	if c.clientSecret == "" {
+		return "", errors.New("socrate: client_secret required for service-account token exchange")
+	}
+
+	data := url.Values{
+		"grant_type":    {"client_credentials"},
+		"client_id":     {c.clientID},
+		"client_secret": {c.clientSecret},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.oauthURL("/oauth/token"), bytes.NewBufferString(data.Encode()))
 	if err != nil {
-		return "", fmt.Errorf("fetch apps: %w", err)
+		return "", fmt.Errorf("build token request: %w", err)
 	}
-	defer resp.Body.Close()
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("token exchange: %w", err)
+	}
+	b, err := readBody(resp)
+	if err != nil {
+		return "", fmt.Errorf("read token response: %w", err)
+	}
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("fetch apps failed HTTP %d: %s", resp.StatusCode, b)
+		return "", fmt.Errorf("token exchange HTTP %d: %s", resp.StatusCode, b)
 	}
-	var result AppListResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("decode apps: %w", err)
+
+	var tr tokenResponse
+	if err := json.Unmarshal(b, &tr); err != nil {
+		return "", fmt.Errorf("decode token response: %w", err)
 	}
-	for _, app := range result.Apps {
-		if app.ClientID == c.clientID {
-			c.resolvedAppID = fmt.Sprintf("%d", app.ID)
-			return c.resolvedAppID, nil
-		}
+	c.svcToken = tr.AccessToken
+	if tr.ExpiresIn > 0 {
+		c.svcTokenExpiry = time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second)
+	} else {
+		c.svcTokenExpiry = time.Now().Add(55 * time.Minute)
 	}
-	return "", fmt.Errorf("socrate: no app found for client_id %s", c.clientID)
+	return c.svcToken, nil
 }
 
 // ────────────────────────────────────────────────────────────────────────────
 // Data types
 // ────────────────────────────────────────────────────────────────────────────
 
-// User represents a Socrate identity record.
+// User mirrors the AppUserResponse returned by the app-scoped /api/apps/{id}/users endpoints.
 type User struct {
-	ID          uint       `json:"id"`
-	Email       string     `json:"email"`
-	Name        string     `json:"name"`
-	FirstName   string     `json:"first_name"`
-	LastName    string     `json:"last_name"`
-	DisplayName string     `json:"display_name"`
-	Role        string     `json:"role"`
-	Status      string     `json:"status"`
-	IsVerified  bool       `json:"is_verified"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	LastLogin   *time.Time `json:"last_login,omitempty"`
+	ID         uint       `json:"id"`
+	Email      string     `json:"email"`
+	Name       string     `json:"name"`
+	Role       string     `json:"role"`
+	IsVerified bool       `json:"is_verified"`
+	InviteSent bool       `json:"invite_sent"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastLogin  *time.Time `json:"last_login,omitempty"`
 }
 
-// UserListResponse is the paginated list response.
+// UserListResponse is the paginated list returned by ListUsers.
 type UserListResponse struct {
 	Users      []User `json:"users"`
 	TotalCount int64  `json:"total_count"`
@@ -247,24 +326,40 @@ type UserListResponse struct {
 	PageSize   int    `json:"page_size"`
 }
 
-// CreateUserRequest is the body for creating a user.
+// CreateUserRequest is the body for adding a user to an app.
+// Name is optional; when empty Socrate uses the email address as the display name.
 type CreateUserRequest struct {
-	Email       string `json:"email"`
-	FullName    string `json:"full_name"`
-	FirstName   string `json:"first_name,omitempty"`
-	LastName    string `json:"last_name,omitempty"`
-	DisplayName string `json:"display_name,omitempty"`
-	Role        string `json:"role"`
-	Password    string `json:"password,omitempty"`
+	Email string `json:"email"`
+	Name  string `json:"name,omitempty"`
+	Role  string `json:"role"`
 }
 
-// UpdateUserRequest is the body for updating a user (all fields optional).
-type UpdateUserRequest struct {
-	FullName    *string `json:"full_name,omitempty"`
-	FirstName   *string `json:"first_name,omitempty"`
-	LastName    *string `json:"last_name,omitempty"`
-	DisplayName *string `json:"display_name,omitempty"`
-	Role        *string `json:"role,omitempty"`
+// CreateUserResult is returned by CreateUser, RegisterUser, and InviteUserAsService.
+// It reflects the one-time invite information returned by Socrate.
+type CreateUserResult struct {
+	UserID     uint   `json:"user_id"`
+	InviteToken string `json:"invite_token"`
+	Role       string `json:"role"`
+	EmailSent  bool   `json:"email_sent"`
+	EmailError string `json:"email_error,omitempty"`
+}
+
+// ServiceInviteRequest is the body for the service-account invite endpoint.
+type ServiceInviteRequest struct {
+	Email string `json:"email"`
+	Role  string `json:"role"`
+}
+
+// ProfileInfo mirrors the OIDC /oauth/userinfo response.
+type ProfileInfo struct {
+	Sub         string `json:"sub"`
+	Email       string `json:"email"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name,omitempty"`
+	FirstName   string `json:"first_name,omitempty"`
+	LastName    string `json:"last_name,omitempty"`
+	GivenName   string `json:"given_name,omitempty"`
+	FamilyName  string `json:"family_name,omitempty"`
 }
 
 // ActivityLog is a Socrate security audit log entry.
@@ -293,47 +388,23 @@ type ActivityLogResponse struct {
 	PageSize   int           `json:"page_size"`
 }
 
-// ServiceInviteRequest is the body for the admin-port invite endpoint.
-type ServiceInviteRequest struct {
-	Email string `json:"email"`
-	Role  string `json:"role"`
-}
-
-// ServiceInviteResponse wraps the created user and email delivery metadata.
-type ServiceInviteResponse struct {
-	User       *User
-	EmailSent  bool   `json:"email_sent"`
-	EmailError string `json:"email_error,omitempty"`
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// decodeUserResponse
-// ────────────────────────────────────────────────────────────────────────────
-
-// decodeUserResponse handles both flat {"id":1,...} and wrapped {"user":{...}}
-// response shapes from Socrate.
-func decodeUserResponse(body []byte) (*User, error) {
-	var u User
-	if err := json.Unmarshal(body, &u); err != nil {
-		return nil, fmt.Errorf("decode user: %w", err)
-	}
-	if u.ID != 0 {
-		return &u, nil
-	}
-	var env struct {
-		User User `json:"user"`
-	}
-	if err := json.Unmarshal(body, &env); err == nil && env.User.ID != 0 {
-		return &env.User, nil
-	}
-	return &u, nil
+// IntrospectResponse holds the token introspection result (RFC 7662).
+type IntrospectResponse struct {
+	Active    bool   `json:"active"`
+	Sub       string `json:"sub,omitempty"`
+	Scope     string `json:"scope,omitempty"`
+	ClientID  string `json:"client_id,omitempty"`
+	TokenType string `json:"token_type,omitempty"`
+	Exp       int64  `json:"exp,omitempty"`
+	Iat       int64  `json:"iat,omitempty"`
+	Role      string `json:"role,omitempty"`
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// User management — JWT-forwarding methods
+// User management — JWT-forwarding methods  (Admin port)
 // ────────────────────────────────────────────────────────────────────────────
 
-// ListUsers retrieves a paginated + searchable user list using the caller's JWT.
+// ListUsers retrieves a paginated + searchable user list for the app using the caller's JWT.
 func (c *Client) ListUsers(ctx context.Context, search string, page, pageSize int) (*UserListResponse, error) {
 	appID, err := c.getAppID(ctx)
 	if err != nil {
@@ -343,477 +414,443 @@ func (c *Client) ListUsers(ctx context.Context, search string, page, pageSize in
 	if search != "" {
 		path += "&search=" + url.QueryEscape(search)
 	}
-	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	resp, err := c.doWithJWT(ctx, http.MethodGet, c.adminURL(path), nil)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	b, err := readBody(resp)
+	if err != nil {
+		return nil, err
+	}
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("list users HTTP %d: %s", resp.StatusCode, b)
 	}
 	var result UserListResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(b, &result); err != nil {
 		return nil, fmt.Errorf("decode list users: %w", err)
 	}
 	return &result, nil
 }
 
 // GetUser retrieves a user by ID using the caller's JWT.
+// Returns nil, nil when the user is not found (404).
 func (c *Client) GetUser(ctx context.Context, userID string) (*User, error) {
 	appID, err := c.getAppID(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("resolve app ID: %w", err)
 	}
-	resp, err := c.doRequest(ctx, http.MethodGet, fmt.Sprintf("/api/apps/%s/users/%s", appID, userID), nil)
+	resp, err := c.doWithJWT(ctx, http.MethodGet,
+		c.adminURL(fmt.Sprintf("/api/apps/%s/users/%s", appID, userID)), nil)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	b, err := readBody(resp)
+	if err != nil {
+		return nil, err
+	}
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("get user HTTP %d: %s", resp.StatusCode, b)
 	}
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read get user: %w", err)
+	var u User
+	if err := json.Unmarshal(b, &u); err != nil {
+		return nil, fmt.Errorf("decode user: %w", err)
 	}
-	return decodeUserResponse(b)
+	return &u, nil
 }
 
-// CreateUser creates a user using the caller's JWT.
-func (c *Client) CreateUser(ctx context.Context, req CreateUserRequest) (*User, error) {
+// CreateUser adds a user to the app using the caller's JWT.
+// If the user does not yet exist in Socrate, they are created and an invite email is sent.
+// Returns ErrUserAlreadyExists when the user already has a role in the app (409).
+func (c *Client) CreateUser(ctx context.Context, req CreateUserRequest) (*CreateUserResult, error) {
 	appID, err := c.getAppID(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("resolve app ID: %w", err)
 	}
-	resp, err := c.doRequest(ctx, http.MethodPost, fmt.Sprintf("/api/apps/%s/users", appID), req)
+	resp, err := c.doWithJWT(ctx, http.MethodPost,
+		c.adminURL(fmt.Sprintf("/api/apps/%s/users", appID)), req)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	b, err := readBody(resp)
+	if err != nil {
+		return nil, err
+	}
 	if resp.StatusCode == http.StatusConflict {
 		return nil, ErrUserAlreadyExists
 	}
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("create user HTTP %d: %s", resp.StatusCode, b)
 	}
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read create user: %w", err)
+	var result CreateUserResult
+	if err := json.Unmarshal(b, &result); err != nil {
+		return nil, fmt.Errorf("decode create user response: %w", err)
 	}
-	return decodeUserResponse(b)
+	return &result, nil
 }
 
-// UpdateUser updates a user's fields using the caller's JWT.
-func (c *Client) UpdateUser(ctx context.Context, userID string, req UpdateUserRequest) (*User, error) {
+// UpdateUserRole changes the role of a user within the app using the caller's JWT.
+// Valid roles: admin, manager, editor, viewer, user.
+func (c *Client) UpdateUserRole(ctx context.Context, userID, role string) error {
 	appID, err := c.getAppID(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("resolve app ID: %w", err)
+		return fmt.Errorf("resolve app ID: %w", err)
 	}
-	resp, err := c.doRequest(ctx, http.MethodPut, fmt.Sprintf("/api/apps/%s/users/%s", appID, userID), req)
+	body := map[string]string{"role": role}
+	resp, err := c.doWithJWT(ctx, http.MethodPut,
+		c.adminURL(fmt.Sprintf("/api/apps/%s/users/%s", appID, userID)), body)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	defer resp.Body.Close()
+	b, err := readBody(resp)
+	if err != nil {
+		return err
+	}
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("update user HTTP %d: %s", resp.StatusCode, b)
+		return fmt.Errorf("update user role HTTP %d: %s", resp.StatusCode, b)
 	}
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read update user: %w", err)
-	}
-	return decodeUserResponse(b)
+	return nil
 }
 
-// DeleteUser removes a user using the caller's JWT.
+// DeleteUser removes a user from the app (removes the role assignment) using the caller's JWT.
 func (c *Client) DeleteUser(ctx context.Context, userID string) error {
 	appID, err := c.getAppID(ctx)
 	if err != nil {
 		return fmt.Errorf("resolve app ID: %w", err)
 	}
-	resp, err := c.doRequest(ctx, http.MethodDelete, fmt.Sprintf("/api/apps/%s/users/%s", appID, userID), nil)
+	resp, err := c.doWithJWT(ctx, http.MethodDelete,
+		c.adminURL(fmt.Sprintf("/api/apps/%s/users/%s", appID, userID)), nil)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	b, err := readBody(resp)
+	if err != nil {
+		return err
+	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		b, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("delete user HTTP %d: %s", resp.StatusCode, b)
 	}
 	return nil
 }
 
-// ResendVerification re-sends the verification email for a user.
+// ResendVerification re-sends the email verification message for a user.
 func (c *Client) ResendVerification(ctx context.Context, userID string) error {
 	appID, err := c.getAppID(ctx)
 	if err != nil {
 		return fmt.Errorf("resolve app ID: %w", err)
 	}
-	resp, err := c.doRequest(ctx, http.MethodPost, fmt.Sprintf("/api/apps/%s/users/%s/resend-verification", appID, userID), nil)
+	resp, err := c.doWithJWT(ctx, http.MethodPost,
+		c.adminURL(fmt.Sprintf("/api/apps/%s/users/%s/resend-verification", appID, userID)), nil)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	b, err := readBody(resp)
+	if err != nil {
+		return err
+	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		b, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("resend verification HTTP %d: %s", resp.StatusCode, b)
 	}
 	return nil
 }
 
-// ResetPassword triggers a password-reset email for a user.
-func (c *Client) ResetPassword(ctx context.Context, userID string) error {
+// ForcePasswordReset triggers a password-reset email for a user.
+func (c *Client) ForcePasswordReset(ctx context.Context, userID string) error {
 	appID, err := c.getAppID(ctx)
 	if err != nil {
 		return fmt.Errorf("resolve app ID: %w", err)
 	}
-	resp, err := c.doRequest(ctx, http.MethodPost, fmt.Sprintf("/api/apps/%s/users/%s/reset-password", appID, userID), nil)
+	resp, err := c.doWithJWT(ctx, http.MethodPost,
+		c.adminURL(fmt.Sprintf("/api/apps/%s/users/%s/reset-password", appID, userID)), nil)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	b, err := readBody(resp)
+	if err != nil {
+		return err
+	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("reset password HTTP %d: %s", resp.StatusCode, b)
+		return fmt.Errorf("force password reset HTTP %d: %s", resp.StatusCode, b)
 	}
 	return nil
 }
 
-// GetCurrentUserProfile calls the OIDC /oauth/userinfo endpoint using the JWT
-// in ctx. Returns nil, nil on 401/404 (soft failure).
-func (c *Client) GetCurrentUserProfile(ctx context.Context) (*User, error) {
-	jwt, err := getJWT(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("no JWT in context: %w", err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/oauth/userinfo", nil)
-	if err != nil {
-		return nil, fmt.Errorf("build userinfo request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+jwt)
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("userinfo: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusNotFound {
-		return nil, nil
-	}
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("userinfo HTTP %d: %s", resp.StatusCode, b)
-	}
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read userinfo: %w", err)
-	}
-	var raw map[string]interface{}
-	if err := json.Unmarshal(b, &raw); err != nil {
-		return nil, fmt.Errorf("decode userinfo: %w", err)
-	}
-	u := &User{}
-	str := func(key string) string {
-		v, _ := raw[key].(string)
-		return v
-	}
-	u.Email = str("email")
-	u.Name = str("name")
-	u.DisplayName = str("display_name")
-	u.FirstName = str("first_name")
-	u.LastName = str("last_name")
-	if u.FirstName == "" {
-		u.FirstName = str("given_name")
-	}
-	if u.LastName == "" {
-		u.LastName = str("family_name")
-	}
-	return u, nil
-}
-
 // ────────────────────────────────────────────────────────────────────────────
-// Service-account token management (client_credentials grant)
+// User management — service-account methods  (Admin port)
 // ────────────────────────────────────────────────────────────────────────────
 
-type clientCredentialsTokenResponse struct {
-	AccessToken string `json:"access_token"`
-	ExpiresIn   int    `json:"expires_in"`
-	TokenType   string `json:"token_type"`
-}
-
-// getServiceToken returns a cached service-account token, refreshing it when
-// expired. Thread-safe.
-func (c *Client) getServiceToken(ctx context.Context) (string, error) {
-	c.svcTokenMu.Lock()
-	defer c.svcTokenMu.Unlock()
-
-	if c.svcToken != "" && time.Now().Add(30*time.Second).Before(c.svcTokenExpiry) {
-		return c.svcToken, nil
-	}
-	if c.clientSecret == "" {
-		return "", errors.New("socrate: client_secret required for service-account token exchange")
-	}
-
-	data := url.Values{
-		"grant_type":    {"client_credentials"},
-		"client_id":     {c.clientID},
-		"client_secret": {c.clientSecret},
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/oauth/token", bytes.NewBufferString(data.Encode()))
-	if err != nil {
-		return "", fmt.Errorf("build token request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("token exchange: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("token exchange HTTP %d: %s", resp.StatusCode, b)
-	}
-
-	var tr clientCredentialsTokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tr); err != nil {
-		return "", fmt.Errorf("decode token response: %w", err)
-	}
-	c.svcToken = tr.AccessToken
-	if tr.ExpiresIn > 0 {
-		c.svcTokenExpiry = time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second)
-	} else {
-		c.svcTokenExpiry = time.Now().Add(55 * time.Minute)
-	}
-	return c.svcToken, nil
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Service-account user management (no user JWT required)
-// ────────────────────────────────────────────────────────────────────────────
-
-// GetUserAsService retrieves a user by Socrate numeric ID using the
-// client_credentials token. Returns nil, nil when the user is not found.
+// GetUserAsService retrieves a user by numeric ID using the service-account token.
+// Returns nil, nil when the user is not found (404).
 func (c *Client) GetUserAsService(ctx context.Context, userID string) (*User, error) {
-	tok, err := c.getServiceToken(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("get service token: %w", err)
-	}
-	appID, err := c.getAppIDWithToken(ctx, tok)
+	appID, err := c.getAppIDAsService(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("resolve app ID: %w", err)
 	}
-	resp, err := c.doRequestWithToken(ctx, tok, http.MethodGet, fmt.Sprintf("/api/apps/%s/users/%s", appID, userID), nil)
+	resp, err := c.doWithServiceToken(ctx, http.MethodGet,
+		c.adminURL(fmt.Sprintf("/api/apps/%s/users/%s", appID, userID)), nil)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	b, err := readBody(resp)
+	if err != nil {
+		return nil, err
+	}
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("get user HTTP %d: %s", resp.StatusCode, b)
 	}
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read get user: %w", err)
+	var u User
+	if err := json.Unmarshal(b, &u); err != nil {
+		return nil, fmt.Errorf("decode user: %w", err)
 	}
-	return decodeUserResponse(b)
+	return &u, nil
 }
 
-// ListUsersAsService fetches the full paginated user list via the admin port
-// using the client_credentials token.
-func (c *Client) ListUsersAsService(ctx context.Context, page, pageSize int) (*UserListResponse, error) {
-	tok, err := c.getServiceToken(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("get service token: %w", err)
-	}
-	appID, err := c.getAppIDWithToken(ctx, tok)
+// RegisterUser creates a user and adds them to the app using the service-account token.
+// Socrate dispatches an invite email automatically.
+// Returns ErrUserAlreadyExists on 409.
+func (c *Client) RegisterUser(ctx context.Context, req CreateUserRequest) (*CreateUserResult, error) {
+	appID, err := c.getAppIDAsService(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("resolve app ID: %w", err)
 	}
-	rawURL := fmt.Sprintf("%s/api/apps/%s/service/users?page=%d&page_size=%d", c.adminBaseURL, appID, page, pageSize)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+tok)
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doWithServiceToken(ctx, http.MethodPost,
+		c.adminURL(fmt.Sprintf("/api/apps/%s/users", appID)), req)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("list users HTTP %d: %s", resp.StatusCode, b)
+	b, err := readBody(resp)
+	if err != nil {
+		return nil, err
 	}
-	var result UserListResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode: %w", err)
+	if resp.StatusCode == http.StatusConflict {
+		return nil, ErrUserAlreadyExists
+	}
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("register user HTTP %d: %s", resp.StatusCode, b)
+	}
+	var result CreateUserResult
+	if err := json.Unmarshal(b, &result); err != nil {
+		return nil, fmt.Errorf("decode register user response: %w", err)
 	}
 	return &result, nil
 }
 
-// RegisterUser creates a user using the client_credentials service token.
-// Socrate dispatches a verification email automatically.
-func (c *Client) RegisterUser(ctx context.Context, req CreateUserRequest) (*User, error) {
-	tok, err := c.getServiceToken(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("get service token: %w", err)
-	}
-	appID, err := c.getAppIDWithToken(ctx, tok)
+// InviteUserAsService creates a user via the dedicated M2M service route and
+// dispatches an invite email. No user JWT is required.
+// Returns ErrUserAlreadyExists on 409.
+func (c *Client) InviteUserAsService(ctx context.Context, req ServiceInviteRequest) (*CreateUserResult, error) {
+	appID, err := c.getAppIDAsService(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("resolve app ID: %w", err)
 	}
-	resp, err := c.doRequestWithToken(ctx, tok, http.MethodPost, fmt.Sprintf("/api/apps/%s/users", appID), req)
+	resp, err := c.doWithServiceToken(ctx, http.MethodPost,
+		c.adminURL(fmt.Sprintf("/api/apps/%s/service/users", appID)), req)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	b, err := readBody(resp)
+	if err != nil {
+		return nil, err
+	}
 	if resp.StatusCode == http.StatusConflict {
 		return nil, ErrUserAlreadyExists
 	}
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("register user HTTP %d: %s", resp.StatusCode, b)
-	}
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read register user: %w", err)
-	}
-	return decodeUserResponse(b)
-}
-
-// InviteUserAsService creates a user and dispatches an invite email via the
-// Socrate admin-port endpoint (no user JWT needed). Returns ErrUserAlreadyExists
-// on 409.
-func (c *Client) InviteUserAsService(ctx context.Context, req ServiceInviteRequest) (*ServiceInviteResponse, error) {
-	tok, err := c.getServiceToken(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("get service token: %w", err)
-	}
-	appID, err := c.getAppIDWithToken(ctx, tok)
-	if err != nil {
-		return nil, fmt.Errorf("resolve app ID: %w", err)
-	}
-
-	rawURL := fmt.Sprintf("%s/api/apps/%s/service/users", c.adminBaseURL, appID)
-	bodyBytes, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("marshal invite: %w", err)
-	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, fmt.Errorf("build invite request: %w", err)
-	}
-	httpReq.Header.Set("Authorization", "Bearer "+tok)
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("invite user: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusConflict {
-		return nil, ErrUserAlreadyExists
-	}
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("invite user HTTP %d: %s", resp.StatusCode, b)
 	}
-
-	rawBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read invite response: %w", err)
+	var result CreateUserResult
+	if err := json.Unmarshal(b, &result); err != nil {
+		return nil, fmt.Errorf("decode invite user response: %w", err)
 	}
-	var env struct {
-		EmailSent  bool   `json:"email_sent"`
-		EmailError string `json:"email_error"`
-	}
-	_ = json.Unmarshal(rawBody, &env)
-	user, _ := decodeUserResponse(rawBody)
-	return &ServiceInviteResponse{
-		User:       user,
-		EmailSent:  env.EmailSent,
-		EmailError: env.EmailError,
-	}, nil
+	return &result, nil
 }
 
-// SendMagicLink dispatches a passwordless sign-in email. Returns nil when the
-// user is not found (suppresses 404 to avoid account enumeration).
-func (c *Client) SendMagicLink(ctx context.Context, email, callbackURL string) error {
-	tok, err := c.getServiceToken(ctx)
-	if err != nil {
-		return fmt.Errorf("get service token: %w", err)
-	}
-	appID, err := c.getAppIDWithToken(ctx, tok)
-	if err != nil {
-		return fmt.Errorf("resolve app ID: %w", err)
-	}
+// ────────────────────────────────────────────────────────────────────────────
+// OIDC / Token operations  (OAuth port)
+// ────────────────────────────────────────────────────────────────────────────
 
-	listPath := fmt.Sprintf("/api/apps/%s/users?search=%s&page=1&page_size=1", appID, url.QueryEscape(email))
-	listResp, err := c.doRequestWithToken(ctx, tok, http.MethodGet, listPath, nil)
+// GetCurrentUserProfile calls GET /oauth/userinfo using the JWT in ctx.
+// Returns nil, nil on 401/404.
+func (c *Client) GetCurrentUserProfile(ctx context.Context) (*ProfileInfo, error) {
+	resp, err := c.doWithJWT(ctx, http.MethodGet, c.oauthURL("/oauth/userinfo"), nil)
 	if err != nil {
-		return fmt.Errorf("find user: %w", err)
+		return nil, fmt.Errorf("userinfo: %w", err)
 	}
-	defer listResp.Body.Close()
-	if listResp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(listResp.Body)
-		return fmt.Errorf("find user HTTP %d: %s", listResp.StatusCode, b)
+	b, err := readBody(resp)
+	if err != nil {
+		return nil, err
 	}
-	var list UserListResponse
-	if err := json.NewDecoder(listResp.Body).Decode(&list); err != nil {
-		return fmt.Errorf("decode user list: %w", err)
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusNotFound {
+		return nil, nil
 	}
-	if len(list.Users) == 0 {
-		return nil // suppress: no account enumeration
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("userinfo HTTP %d: %s", resp.StatusCode, b)
 	}
+	var p ProfileInfo
+	if err := json.Unmarshal(b, &p); err != nil {
+		return nil, fmt.Errorf("decode userinfo: %w", err)
+	}
+	// OIDC standard aliases
+	if p.FirstName == "" {
+		p.FirstName = p.GivenName
+	}
+	if p.LastName == "" {
+		p.LastName = p.FamilyName
+	}
+	return &p, nil
+}
 
-	userID := fmt.Sprintf("%d", list.Users[0].ID)
-	body := map[string]string{"callback_url": callbackURL}
-	resp, err := c.doRequestWithToken(ctx, tok, http.MethodPost, fmt.Sprintf("/api/apps/%s/users/%s/magic-link", appID, userID), body)
+// RevokeToken revokes an access or refresh token (RFC 7009).
+// Uses the service-account credentials for client authentication.
+func (c *Client) RevokeToken(ctx context.Context, token string) error {
+	if c.clientSecret == "" {
+		return errors.New("socrate: client_secret required for token revocation")
+	}
+	data := url.Values{
+		"token":         {token},
+		"client_id":     {c.clientID},
+		"client_secret": {c.clientSecret},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.oauthURL("/oauth/revoke"), bytes.NewBufferString(data.Encode()))
 	if err != nil {
-		return fmt.Errorf("send magic link: %w", err)
+		return fmt.Errorf("build revoke request: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		return nil
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("revoke: %w", err)
 	}
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusAccepted {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("send magic link HTTP %d: %s", resp.StatusCode, b)
+	b, err := readBody(resp)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("revoke HTTP %d: %s", resp.StatusCode, b)
 	}
 	return nil
 }
 
+// IntrospectToken validates a token server-side and returns its active state and claims (RFC 7662).
+// Uses the service-account credentials for client authentication.
+func (c *Client) IntrospectToken(ctx context.Context, token string) (*IntrospectResponse, error) {
+	if c.clientSecret == "" {
+		return nil, errors.New("socrate: client_secret required for token introspection")
+	}
+	data := url.Values{
+		"token":         {token},
+		"client_id":     {c.clientID},
+		"client_secret": {c.clientSecret},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.oauthURL("/oauth/introspect"), bytes.NewBufferString(data.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("build introspect request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("introspect: %w", err)
+	}
+	b, err := readBody(resp)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("introspect HTTP %d: %s", resp.StatusCode, b)
+	}
+	var result IntrospectResponse
+	if err := json.Unmarshal(b, &result); err != nil {
+		return nil, fmt.Errorf("decode introspect: %w", err)
+	}
+	return &result, nil
+}
+
 // ────────────────────────────────────────────────────────────────────────────
-// Activity logs
+// Passwordless magic-link  (Admin port — service-account only)
 // ────────────────────────────────────────────────────────────────────────────
 
-// GetActivityLogs retrieves paginated security audit events from Socrate.
+// MagicLinkResponse is the body returned by POST /api/apps/{id}/service/magic-link.
+// In development mode Socrate populates MagicURL with the raw token URL so that
+// integration tests can drive the full flow without a live mail server.
+// In production, MagicURL is always empty.
+type MagicLinkResponse struct {
+	Message  string `json:"message"`
+	MagicURL string `json:"magic_url,omitempty"`
+}
+
+// SendMagicLink asks Socrate to email a single-use passwordless login link to
+// the given address on behalf of the app.
+//
+// This is a service-account (M2M) call — the client exchanges its
+// ClientID + ClientSecret for a client_credentials token and sends the request
+// to POST /api/apps/{app_id}/service/magic-link on the Admin port (8081).
+// No human-user JWT is needed or accepted.
+//
+// Security notes mirrored from Socrate:
+//   - The response is always the same opaque 202 regardless of whether the
+//     email is registered — callers cannot use the response to enumerate users.
+//   - Socrate rate-limits requests to 5 per address per hour; a 429 is returned
+//     when the limit is exceeded.
+//   - Only set email on behalf of a user who explicitly requested a login link —
+//     triggering unsolicited emails is a terms-of-service violation.
+func (c *Client) SendMagicLink(ctx context.Context, email string) (*MagicLinkResponse, error) {
+	appID, err := c.getAppIDAsService(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve app ID: %w", err)
+	}
+	body := map[string]string{"email": email}
+	resp, err := c.doWithServiceToken(ctx, http.MethodPost,
+		c.adminURL(fmt.Sprintf("/api/apps/%s/service/magic-link", appID)), body)
+	if err != nil {
+		return nil, err
+	}
+	b, err := readBody(resp)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, ErrMagicLinkRateLimited
+	}
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("send magic link HTTP %d: %s", resp.StatusCode, b)
+	}
+	var result MagicLinkResponse
+	if err := json.Unmarshal(b, &result); err != nil {
+		return nil, fmt.Errorf("decode magic link response: %w", err)
+	}
+	return &result, nil
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Security / Audit  (Admin port)
+// ────────────────────────────────────────────────────────────────────────────
+
+// GetActivityLogs retrieves paginated security audit events for the app.
 func (c *Client) GetActivityLogs(ctx context.Context, page, pageSize int) (*ActivityLogResponse, error) {
 	appID, err := c.getAppID(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("resolve app ID: %w", err)
 	}
 	path := fmt.Sprintf("/api/admin/security/events?app_id=%s&page=%d&page_size=%d", appID, page, pageSize)
-	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	resp, err := c.doWithJWT(ctx, http.MethodGet, c.adminURL(path), nil)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	b, err := readBody(resp)
+	if err != nil {
+		return nil, err
+	}
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("get security events HTTP %d: %s", resp.StatusCode, b)
 	}
 	var result ActivityLogResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(b, &result); err != nil {
 		return nil, fmt.Errorf("decode: %w", err)
 	}
 	return &result, nil
