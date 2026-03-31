@@ -24,16 +24,18 @@ type contextKey string
 
 // Unexported key constants. Callers interact exclusively through With*/Get* helpers.
 const (
-	tenantIDKey  contextKey = "tenant_id"
-	userPlanKey  contextKey = "user_plan"
-	userIDKey    contextKey = "user_id"
-	userRoleKey  contextKey = "user_role"
-	userEmailKey contextKey = "user_email"
-	userNameKey  contextKey = "user_name"
-	userSubKey   contextKey = "user_sub"
-	loggerKey    contextKey = "logger"
-	requestIDKey contextKey = "request_id"
-	rawJWTKey    contextKey = "raw_jwt"
+	tenantIDKey     contextKey = "tenant_id"
+	userPlanKey     contextKey = "user_plan"
+	userIDKey       contextKey = "user_id"
+	userRoleKey     contextKey = "user_role"
+	userEmailKey    contextKey = "user_email"
+	userNameKey     contextKey = "user_name"
+	userSubKey      contextKey = "user_sub"
+	appRolesKey     contextKey = "app_roles"
+	tokenVersionKey contextKey = "token_version"
+	loggerKey       contextKey = "logger"
+	requestIDKey    contextKey = "request_id"
+	rawJWTKey       contextKey = "raw_jwt"
 )
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -140,6 +142,45 @@ func GetUserSub(ctx context.Context) string {
 		return v
 	}
 	return ""
+}
+
+// ─── App roles & token version ───────────────────────────────────────────────
+
+// WithAppRoles stores the app_roles map (appClientID → role) from the JWT.
+func WithAppRoles(ctx context.Context, roles map[string]string) context.Context {
+	return context.WithValue(ctx, appRolesKey, roles)
+}
+
+// GetAppRoles returns the app_roles map injected by jwtauth.Middleware.
+// Returns nil when absent (e.g. when the token has no app roles or in tests).
+func GetAppRoles(ctx context.Context) map[string]string {
+	if v, ok := ctx.Value(appRolesKey).(map[string]string); ok {
+		return v
+	}
+	return nil
+}
+
+// GetAppRole returns the role the current user holds in the specified app
+// (identified by its client_id). Returns "" when the user has no role in that app.
+func GetAppRole(ctx context.Context, clientID string) string {
+	roles := GetAppRoles(ctx)
+	if roles == nil {
+		return ""
+	}
+	return roles[clientID]
+}
+
+// WithTokenVersion stores the token_version claim from the JWT.
+func WithTokenVersion(ctx context.Context, v int) context.Context {
+	return context.WithValue(ctx, tokenVersionKey, v)
+}
+
+// GetTokenVersion returns the token_version claim. Returns 0 when absent.
+func GetTokenVersion(ctx context.Context) int {
+	if v, ok := ctx.Value(tokenVersionKey).(int); ok {
+		return v
+	}
+	return 0
 }
 
 // ─── JWT ──────────────────────────────────────────────────────────────────────

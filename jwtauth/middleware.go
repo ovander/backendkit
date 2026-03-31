@@ -28,13 +28,34 @@ import (
 )
 
 // SocrateClaims is the JWT claims structure emitted by Socrate.
+//
+// Claims present in every access token issued by the server:
+//   - RegisteredClaims.Subject ("sub") — numeric user ID as a string, e.g. "42"
+//   - Role          — the user's app-scoped role (admin, manager, editor, viewer, user)
+//   - AppRoles      — map of app client_id → role for all apps the user belongs to
+//   - TokenVersion  — monotonic counter; incremented on password change / token revocation
+//
+// Claims NOT issued by the default Socrate server (require custom server configuration):
+//   - TenantID — multi-tenancy identifier; will be empty unless the server is extended
+//   - Plan     — commercial tier; will be empty, causing GetUserPlan to default to "freemium"
+//
+// Claims only present in ID tokens (OIDC flow), NOT in access tokens:
+//   - Email, Name — present in /oauth/userinfo response but not in the bearer access token.
+//     Use GetCurrentUserProfile() to fetch them when needed.
 type SocrateClaims struct {
-	TenantID string `json:"tenant_id"`
-	UserID   string `json:"user_id"`
-	Email    string `json:"email"`
-	Name     string `json:"name"`
-	Role     string `json:"role"`
-	Plan     string `json:"plan"`
+	// Standard Socrate access-token claims.
+	Role         string            `json:"role,omitempty"`
+	AppRoles     map[string]string `json:"app_roles,omitempty"`
+	TokenVersion int               `json:"token_version,omitempty"`
+
+	// Custom claims — require server-side configuration to be populated.
+	TenantID string `json:"tenant_id,omitempty"`
+	Plan     string `json:"plan,omitempty"`
+
+	// ID-token-only claims (empty in access tokens; use GetCurrentUserProfile instead).
+	Email string `json:"email,omitempty"`
+	Name  string `json:"name,omitempty"`
+
 	jwt.RegisteredClaims
 }
 
@@ -98,6 +119,7 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 
 		ctx := r.Context()
 
+		// tenant_id — only present when the server is configured to issue it.
 		if claims.TenantID != "" {
 			tenantID, err := uuid.Parse(claims.TenantID)
 			if err != nil {
@@ -108,21 +130,19 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 			ctx = ctxutil.WithTenantID(ctx, tenantID)
 		}
 
-		// user_id claim takes precedence over jwt.sub
-		userIDStr := claims.UserID
-		if userIDStr == "" {
-			userIDStr = claims.Subject
-		}
-		if userIDStr != "" {
-			userID, err := uuid.Parse(userIDStr)
+		// sub — Socrate issues a numeric string (e.g. "42"); parse as UUID or derive one.
+		if sub := claims.Subject; sub != "" {
+			userID, err := uuid.Parse(sub)
 			if err != nil {
-				// Deterministic UUID from opaque Socrate subject
-				userID = uuid.NewSHA1(uuid.NameSpaceDNS, []byte("socrate:"+userIDStr))
+				// Deterministic UUID from the opaque numeric Socrate subject.
+				userID = uuid.NewSHA1(uuid.NameSpaceDNS, []byte("socrate:"+sub))
 			}
 			ctx = ctxutil.WithUserID(ctx, userID)
-			ctx = ctxutil.WithUserSub(ctx, userIDStr)
+			ctx = ctxutil.WithUserSub(ctx, sub)
 		}
 
+		// email / name — only non-empty when an ID token is used as the bearer token.
+		// For standard access tokens use socrate.Client.GetCurrentUserProfile() instead.
 		if claims.Email != "" {
 			ctx = ctxutil.WithUserEmail(ctx, claims.Email)
 		}
@@ -132,8 +152,16 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 		if claims.Role != "" {
 			ctx = ctxutil.WithUserRole(ctx, claims.Role)
 		}
+		// plan — only present when the server is configured to issue it.
+		// Defaults to "freemium" via ctxutil.GetUserPlan when absent.
 		if claims.Plan != "" {
 			ctx = ctxutil.WithUserPlan(ctx, claims.Plan)
+		}
+		if len(claims.AppRoles) > 0 {
+			ctx = ctxutil.WithAppRoles(ctx, claims.AppRoles)
+		}
+		if claims.TokenVersion != 0 {
+			ctx = ctxutil.WithTokenVersion(ctx, claims.TokenVersion)
 		}
 
 		// Store raw JWT so downstream clients (e.g. socrate.Client) can forward

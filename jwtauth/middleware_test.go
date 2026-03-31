@@ -78,13 +78,15 @@ func TestHandler_ValidToken_PopulatesContext(t *testing.T) {
 	m := jwtauth.New(srv.URL, "", testLogger())
 
 	claims := jwtauth.SocrateClaims{
+		// TenantID requires custom server config; still accepted when present.
 		TenantID: "00000000-0000-0000-0000-000000000001",
-		UserID:   "00000000-0000-0000-0000-000000000002",
-		Email:    "alice@example.com",
-		Name:     "Alice",
-		Role:     "editor",
-		Plan:     "pro",
+		// Socrate sets sub to a numeric string; the middleware derives a UUID from it.
+		Email: "alice@example.com",
+		Name:  "Alice",
+		Role:  "editor",
+		Plan:  "pro",
 		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   "42",
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		},
 	}
