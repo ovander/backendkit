@@ -11,12 +11,28 @@ import (
 // AppError is the standard error type returned by services and handlers.
 type AppError struct {
 	Code       string `json:"code"`
-	Message    string `json:"message"`
+	Key        string `json:"key,omitempty"`    // i18n key — frontend translates this
+	Message    string `json:"message"`           // English dev-facing message (logs only)
 	StatusCode int    `json:"-"`
 	Details    any    `json:"details,omitempty"`
 }
 
 func (e *AppError) Error() string { return e.Message }
+
+// WithKey returns the same error with the given i18n key set.
+// Use this to tag errors for frontend localisation:
+//
+//	apierror.BadRequest("invalid store ID").WithKey("errors.invalidStoreId")
+func (e *AppError) WithKey(key string) *AppError {
+	e.Key = key
+	return e
+}
+
+// WithDetails returns the same error with the given details set.
+func (e *AppError) WithDetails(details any) *AppError {
+	e.Details = details
+	return e
+}
 
 // ErrorResponse wraps AppError for JSON API responses.
 type ErrorResponse struct {
