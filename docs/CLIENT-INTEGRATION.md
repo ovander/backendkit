@@ -321,9 +321,25 @@ Legend — **Auth**: `JWT` = forwards caller JWT (mode A), `M2M` = service-accou
 
 | Method | Auth | Returns | Notes |
 |--------|------|---------|-------|
-| `GetCurrentUserProfile(ctx)` | JWT | `*ProfileInfo` | `/oauth/userinfo`; **nil,nil** on 401/404. Use this for email/name. |
+| `GetCurrentUserProfile(ctx)` | JWT | `*ProfileInfo` | `/oauth/userinfo`; **nil,nil** on 401/404. Limited OIDC claim set. |
+| `GetProfile(ctx)` | JWT | `*FullProfile` | full editable profile (`/api/profile`); **nil,nil** on 404. |
+| `UpdateProfile(ctx, UpdateProfileRequest)` | JWT | `*FullProfile` | patches the caller's own profile (name, phone, company, …). |
 | `IntrospectToken(ctx, token)` | creds | `*IntrospectResponse` | RFC 7662; `.Active` tells you if the token is live. |
 | `RevokeToken(ctx, token)` | creds | `error` | RFC 7009; revokes an access or refresh token. |
+| `Logout(ctx)` | JWT | `error` | invalidates the caller's session (`/api/auth/logout`). |
+
+#### Backend-for-frontend (BFF) token flows — OAuth/Admin port
+
+For BFF architectures where the **backend** performs the OAuth exchange instead
+of the browser. The configured `ClientSecret` is sent automatically for
+confidential clients.
+
+| Method | Auth | Returns | Notes |
+|--------|------|---------|-------|
+| `ExchangeCode(ctx, code, redirectURI, codeVerifier)` | creds | `*TokenSet` | Authorization Code + PKCE exchange. Pass `""` verifier if no PKCE. |
+| `RefreshToken(ctx, refreshToken)` | creds | `*TokenSet` | refresh-token grant. |
+| `VerifyMagicLink(ctx, token)` | client_id | `*LoginResult` | completes passwordless login; `ErrMagicLinkAlreadyUsed` (422), `ErrMagicLinkInvalid` (401). |
+| `AdminLogin(ctx, email, password)` | creds | `*LoginResult` | superadmin portal login; `ErrInvalidCredentials` (401). |
 
 #### App-scoped user management — Admin port
 
@@ -360,6 +376,12 @@ automatically from `client_id` (cached).
 | `DeleteApp(ctx, appID)` | JWT | `error` |
 | `RotateSecret(ctx, appID)` | JWT | `*AppWithSecret` (new secret shown once!) |
 
+#### App activity logs — Admin port · app-admin JWT
+
+| Method | Auth | Returns | Notes |
+|--------|------|---------|-------|
+| `GetAppLogs(ctx, page, pageSize)` | JWT | `*AppActivityLogListResponse` | your app's own activity feed (`/api/apps/{id}/logs`). |
+
 #### Global user administration — Admin port · superadmin JWT
 
 | Method | Auth | Returns |
@@ -371,6 +393,8 @@ automatically from `client_id` (cached).
 | `BlockUser(ctx, userID)` | JWT | `error` |
 | `UnlockUser(ctx, userID)` | JWT | `error` |
 | `RevokeUserTokens(ctx, userID)` | JWT | `error` (forces re-login) |
+| `ListSessions(ctx, page, pageSize)` | JWT | `*SessionListResponse` |
+| `GetUserSessions(ctx, userID)` | JWT | `*SessionListResponse` |
 
 #### Superadmins — Admin port
 
@@ -387,15 +411,46 @@ automatically from `client_id` (cached).
 | `BlockIP(ctx, BlockIPRequest)` | `*BlockedIP` |
 | `UnblockIP(ctx, id)` | `error` |
 | `GetIPReputation(ctx, ip)` | `*IPReputation` (nil,nil on 404) |
+| `GetGeoAnalytics(ctx, period)` | `*GeoAnalytics` |
+| `GetTokenStats(ctx, period)` | `*TokenStats` |
+| `StreamSecurityEvents(ctx, StreamEventOptions, handler)` | `error` (blocks; SSE) |
 
-#### Dashboard & audit — Admin port · admin JWT
+#### Alerts — Admin port · admin JWT
+
+| Method | Returns |
+|--------|---------|
+| `ListAlertRules(ctx)` | `*AlertRulesListResponse` |
+| `CreateAlertRule(ctx, AlertRuleRequest)` | `*AlertRule` |
+| `UpdateAlertRule(ctx, id, AlertRuleRequest)` | `*AlertRule` |
+| `DeleteAlertRule(ctx, id)` | `error` |
+| `GetAlertHistory(ctx, page, pageSize)` | `*AlertsHistoryResponse` |
+| `AcknowledgeAlert(ctx, id, note)` | `error` |
+
+#### Reports — Admin port · admin JWT
+
+| Method | Returns |
+|--------|---------|
+| `GenerateSecurityReport(ctx, ReportRequest)` | `*Report` |
+| `GetReportStatus(ctx, reportID)` | `*Report` (nil,nil on 404) |
+| `DownloadReport(ctx, reportID)` | `[]byte` (JSON or CSV) |
+
+#### Dashboard, audit & settings — Admin port · admin JWT
 
 | Method | Returns |
 |--------|---------|
 | `GetDashboardStats(ctx)` | `*DashboardStats` |
 | `GetDashboardHealth(ctx)` | `map[string]interface{}` |
+| `GetDashboardActivity(ctx, limit)` | `*DashboardActivityResponse` |
+| `GetLoginTrends(ctx, days)` | `*LoginTrendsResponse` |
+| `GetAppUsage(ctx)` | `*AppUsageResponse` |
 | `ListAdminLogs(ctx, page, pageSize)` | `*AdminLogListResponse` |
 | `GetAdminLog(ctx, id)` | `*AdminLog` (nil,nil on 404) |
+| `GetAdminActivity(ctx, page, pageSize)` | `*AdminLogListResponse` |
+| `ExportAdminLogs(ctx)` | `[]byte` (CSV) |
+| `GetAdminProfile(ctx)` | `*FullProfile` |
+| `GetAdminStats(ctx)` | `map[string]interface{}` |
+| `GetServerConfig(ctx)` | `*ServerConfig` |
+| `TestDB(ctx)` / `TestCache(ctx)` | `*ConnectionTest` |
 
 ---
 
@@ -403,6 +458,13 @@ automatically from `client_id` (cached).
 
 The frontend's job is to obtain tokens from Socrate and attach them to backend
 requests. Pick **one** primary flow.
+
+> **Prefer a BFF?** If you'd rather keep tokens server-side and out of the
+> browser entirely, let the frontend send the `code` (and your own session
+> cookie) to your backend, and do the exchange there with
+> `client.ExchangeCode` / `client.RefreshToken` / `client.VerifyMagicLink`
+> (§6.4, "BFF token flows"). The browser steps below collapse to "redirect,
+> then hand the `code` to my backend".
 
 ### 7.1 Authorization Code + PKCE (recommended)
 
