@@ -466,11 +466,18 @@ The client also wraps the full Socrate admin and OAuth surface. All admin method
 | App-scoped users | `ListUsers`, `GetUser`, `CreateUser`, `UpdateUserRole`, `DeleteUser`, `ResendVerification`, `ForcePasswordReset` |
 | Service-account (M2M) | `RegisterUser`, `InviteUserAsService`, `GetUserAsService`, `SendMagicLink` |
 | OAuth / OIDC | `GetCurrentUserProfile`, `RevokeToken`, `IntrospectToken` |
+| BFF token flows | `ExchangeCode`, `RefreshToken`, `VerifyMagicLink`, `AdminLogin`, `Logout` |
+| User self-service profile | `GetProfile`, `UpdateProfile` |
 | App management | `ListApps`, `GetApp`, `CreateApp`, `UpdateApp`, `DeleteApp`, `RotateSecret` |
+| App activity logs | `GetAppLogs` |
 | Global user admin | `AdminListUsers`, `AdminGetUser`, `AdminDeleteUser`, `GetUserApps`, `BlockUser`, `UnlockUser`, `RevokeUserTokens` |
+| Sessions | `ListSessions`, `GetUserSessions` |
 | Superadmins | `ListSuperadmins`, `GetSuperadmin`, `CreateSuperadmin`, `UpdateSuperadmin`, `DeleteSuperadmin` |
-| Security monitoring | `GetThreatMetrics`, `ListBlockedIPs`, `BlockIP`, `UnblockIP`, `GetIPReputation`, `GetActivityLogs` |
-| Dashboard & audit | `GetDashboardStats`, `GetDashboardHealth`, `ListAdminLogs`, `GetAdminLog` |
+| Security monitoring | `GetThreatMetrics`, `ListBlockedIPs`, `BlockIP`, `UnblockIP`, `GetIPReputation`, `GetActivityLogs`, `GetGeoAnalytics`, `GetTokenStats`, `StreamSecurityEvents` |
+| Alerts | `ListAlertRules`, `CreateAlertRule`, `UpdateAlertRule`, `DeleteAlertRule`, `GetAlertHistory`, `AcknowledgeAlert` |
+| Reports | `GenerateSecurityReport`, `GetReportStatus`, `DownloadReport` |
+| Dashboard & audit | `GetDashboardStats`, `GetDashboardHealth`, `GetDashboardActivity`, `GetLoginTrends`, `GetAppUsage`, `ListAdminLogs`, `GetAdminLog`, `GetAdminActivity`, `ExportAdminLogs`, `GetAdminProfile`, `GetAdminStats` |
+| Server settings | `GetServerConfig`, `TestDB`, `TestCache` |
 
 ---
 
