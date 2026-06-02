@@ -8,6 +8,26 @@ Shared Go library for backend services that use [Socrate](https://github.com/ova
 
 ---
 
+## Contents
+
+- [Why backendkit?](#why-backendkit)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Environment variables](#environment-variables)
+- [Quick start](#quick-start)
+- [Packages](#packages) · [Which package do I need?](#which-package-do-i-need)
+- [Architecture overview](#architecture-overview)
+- [Full integration example](#full-integration-example)
+- [Package reference](#package-reference)
+  — [apierror](#apierror) · [ctxutil](#ctxutil) · [httpware](#httpware) · [gormlogger](#gormlogger) · [socrate](#socrate) · [jwtauth](#jwtauth) · [tiering](#tiering) · [aigateway](#aigateway) · [ainarration](#ainarration) · [pagination](#pagination) · [buildinfo](#buildinfo)
+- [Testing](#testing)
+- [Troubleshooting](#troubleshooting)
+- [Production usage](#production-usage)
+- [Versioning](#versioning)
+- [Contributing](#contributing)
+
+---
+
 ## Why backendkit?
 
 Building a new Socrate-backed service means solving the same problems every time: validating RS256 JWTs from a JWKS endpoint, propagating tenant/user/plan claims through context, enforcing plan-based feature gates, wiring a structured middleware stack, and normalising AI provider calls. Without a shared library, this logic gets copy-pasted and diverges.
@@ -47,7 +67,23 @@ require github.com/ovander/backendkit v1.5.1
 
 ---
 
-## Minimal example
+## Environment variables
+
+backendkit **reads no environment variables itself** — you pass configuration explicitly to each constructor. The variables below are the conventions used throughout this README's examples; name them however you like in your own service.
+
+| Variable | Consumed by | Purpose |
+|----------|-------------|---------|
+| `SOCRATE_JWKS_URL` | `jwtauth.New` | JWKS endpoint used to validate RS256 signatures |
+| `SOCRATE_ISSUER` | `jwtauth.New` | Expected `iss` claim — optional; enforced only when non-empty |
+| `SOCRATE_BASE_URL` | `socrate.NewClient` | Socrate OAuth port base URL (e.g. `https://auth.example.com`) |
+| `SOCRATE_CLIENT_ID` | `socrate.NewClient` | OAuth client ID |
+| `SOCRATE_CLIENT_SECRET` | `socrate.NewClient` | Client secret — required for service-account calls, `RevokeToken`, `IntrospectToken` |
+| `SOCRATE_APP_ID` | `socrate.NewClient` | Pre-resolved numeric app ID — **required** for every service-account method |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | `aigateway.New` | Provider API key for the configured provider |
+
+---
+
+## Quick start
 
 The smallest working setup: JWT validation and a single protected route.
 
@@ -106,6 +142,26 @@ func main() {
 | [`ainarration`](#ainarration) | Generic LRU+TTL narration cache and `CacheKey` helper |
 | [`pagination`](#pagination) | Query-param parsing and `PagedResponse` |
 | [`buildinfo`](#buildinfo) | Build-time version metadata (`-ldflags`) and a `/version` HTTP handler |
+
+Every package is independent — `go get` pulls the whole module, but importing one package never drags in another (the only internal dependencies are the shared `ctxutil` and `apierror` primitives).
+
+### Which package do I need?
+
+| I want to… | Use |
+|------------|-----|
+| Validate incoming Socrate JWTs and populate the request context | [`jwtauth`](#jwtauth) |
+| Read the tenant / user / role / plan of the current request | [`ctxutil`](#ctxutil) |
+| Add request IDs, structured logging, panic recovery, timeouts, body limits, security headers | [`httpware`](#httpware) |
+| Rate-limit per tenant | [`httpware.RateLimiter`](#httpware) |
+| Gate routes by role/permission | [`httpware.RBAC`](#httpware) |
+| Gate routes or features by commercial plan | [`tiering`](#tiering) |
+| Return consistent JSON errors | [`apierror`](#apierror) |
+| Call Socrate to manage users, apps, tokens, or security | [`socrate`](#socrate) |
+| Call OpenAI or Claude through one interface | [`aigateway`](#aigateway) |
+| Cache AI results to cut latency and cost | [`ainarration`](#ainarration) |
+| Parse `?page`/`?per_page` and return paged lists | [`pagination`](#pagination) |
+| Log GORM queries through logrus / flag slow queries | [`gormlogger`](#gormlogger) |
+| Expose build/version info on a `/version` endpoint | [`buildinfo`](#buildinfo) |
 
 ---
 
@@ -429,8 +485,8 @@ auth := jwtauth.New(
 r.Use(auth.Handler)
 
 // Downstream handlers read claims without importing jwtauth:
-tenantID, _ := ctxutil.GetTenantID(r.Context())
-plan        := ctxutil.GetUserPlan(r.Context())
+tenantID := ctxutil.GetTenantID(r.Context()) // uuid.Nil if the token carried no tenant_id
+plan     := ctxutil.GetUserPlan(r.Context()) // "freemium" when absent
 ```
 
 ---
@@ -582,6 +638,56 @@ info := buildinfo.Get()
 
 ---
 
+## Testing
+
+Because every claim helper reads from `context.Context`, you can exercise gated handlers without minting real JWTs — just seed the context the way `jwtauth` would:
+
+```go
+import (
+    "net/http/httptest"
+
+    "github.com/ovander/backendkit/ctxutil"
+    "github.com/ovander/backendkit/tiering"
+)
+
+req := httptest.NewRequest(http.MethodGet, "/ai/narrate", nil)
+ctx := req.Context()
+ctx = ctxutil.WithUserPlan(ctx, tiering.PlanPro) // pretend a pro user
+ctx = ctxutil.WithUserRole(ctx, "editor")
+req = req.WithContext(ctx)
+// ...serve req through your gate/RBAC middleware and assert on the recorder.
+```
+
+The AI gateway ships a test constructor so handlers that call a provider can run against an `httptest.Server` with no real API key:
+
+```go
+srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+    w.Write([]byte(`{"content":[{"type":"text","text":"hello"}]}`)) // mock Claude response
+}))
+defer srv.Close()
+
+ai := aigateway.ClientForTest("claude", "test-key", srv.URL)
+out, _ := ai.Call(context.Background(), "ping") // → "hello"
+```
+
+`ainarration.NarrationCache.Flush()` resets the cache between test cases, and each package ships runnable `Example*` functions (visible on [pkg.go.dev](https://pkg.go.dev/github.com/ovander/backendkit)) that double as living usage docs.
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely cause & fix |
+|---------|--------------------|
+| **Every request returns 401** | No `Authorization: Bearer <token>` header, an `iss` that doesn't match `SOCRATE_ISSUER`, or the JWKS URL is unreachable. Stale keys are reused on a *transient* fetch failure, but a wrong/empty JWKS URL fails closed. |
+| **`GetTenantID` is `uuid.Nil` / `GetUserPlan` is always `"freemium"`** | `tenant_id` and `plan` are **custom** claims. A stock Socrate server does not emit them — configure Socrate to include them, or these helpers return their zero/default values by design. |
+| **`GetUserEmail` / `GetUserName` are empty** | Email and name live in the **ID token**, not the access token. For access-token requests, fetch them via `socrate.Client.GetCurrentUserProfile`. |
+| **Compile error passing a logger to `httpware.Logger`** | `Logger` takes the base `*logrus.Logger`; `Recover`, `NewRBAC`, `jwtauth.New`, and `tiering.NewGate` take a `*logrus.Entry`. See the [httpware](#httpware) note. |
+| **Service-account call errors with "AppID must be set"** | Set `AppID` in `ClientConfig` (`SOCRATE_APP_ID`). The `/api/admin/apps` lookup needs a human-admin JWT, so a service token cannot resolve the app ID at runtime. |
+| **Rate limiter never limits** | `RateLimiter` keys on the tenant UUID and lets requests through when none is present. Place `rl.Handler` **after** `auth.Handler` so `tenant_id` is already in context. |
+| **`tiering.Gate` always allows / always denies** | The gate reads the plan from context (`ctxutil.GetUserPlan`); confirm auth runs before the gate and that your `PlanRegistry` contains the plan names you check. Unknown plans normalise to the lowest tier. |
+
+---
+
 ## Production usage
 
 backendkit is extracted from and actively used in production by:
@@ -605,7 +711,9 @@ Always pin an explicit version in `go.mod` rather than using `@latest` to keep b
 
 ---
 
-## First-time setup after cloning
+## Contributing
+
+**Local development** — after cloning:
 
 ```bash
 go mod tidy          # resolve and pin all dependencies into go.sum
@@ -614,9 +722,7 @@ go test -race ./...  # race-detector pass
 go vet ./...         # static analysis
 ```
 
----
-
-## Contributing
+**Guidelines:**
 
 1. Add your package under its own directory with a package-level doc comment.
 2. Write table-driven tests; place `_test.go` files in the same package directory.
