@@ -24,7 +24,7 @@ backendkit packages that foundation into a single, versioned dependency so every
 
 ## Requirements
 
-- **Go 1.22** or later
+- **Go 1.25** or later
 - **Socrate** — backendkit is not a generic OAuth2 toolkit. It is designed specifically for services that use Socrate as their identity provider. Without a running Socrate instance, `jwtauth`, `socrate`, and `ctxutil` will not function correctly.
 - A PostgreSQL database is required if you use `tiering.PolicyService` for persistent feature policies.
 
@@ -33,16 +33,16 @@ backendkit packages that foundation into a single, versioned dependency so every
 ## Installation
 
 ```bash
-go get github.com/ovander/backendkit@v1.4.0
+go get github.com/ovander/backendkit@v1.5.1
 ```
 
 ```go
 // go.mod
 module github.com/your-org/my-service
 
-go 1.22
+go 1.25
 
-require github.com/ovander/backendkit v1.4.0
+require github.com/ovander/backendkit v1.5.1
 ```
 
 ---
@@ -100,11 +100,12 @@ func main() {
 | [`httpware`](#httpware) | Chi-compatible middlewares: RequestID, Logger, SecurityHeaders, BodyLimit, Recover, Timeout, RateLimiter, RBAC |
 | [`gormlogger`](#gormlogger) | GORM → logrus bridge with slow-query detection |
 | [`jwtauth`](#jwtauth) | JWT RS256 validation middleware with JWKS cache and stale-key fallback |
-| [`socrate`](#socrate) | Full Socrate API client (user CRUD, service-account token, magic links, invite) |
+| [`socrate`](#socrate) | Full Socrate API client: user CRUD, service-account token, magic links, invite, app & superadmin management, security monitoring, dashboard, audit logs, token introspection/revocation |
 | [`tiering`](#tiering) | Plan registry, tier gate middleware, feature policy model and service |
-| [`aigateway`](#aigateway) | Multi-provider AI client (OpenAI + Claude), `ExtractJSONInto` |
+| [`aigateway`](#aigateway) | Multi-provider AI client (OpenAI + Claude), `ExtractJSON`/`ExtractJSONInto` |
 | [`ainarration`](#ainarration) | Generic LRU+TTL narration cache and `CacheKey` helper |
 | [`pagination`](#pagination) | Query-param parsing and `PagedResponse` |
+| [`buildinfo`](#buildinfo) | Build-time version metadata (`-ldflags`) and a `/version` HTTP handler |
 
 ---
 
@@ -163,7 +164,8 @@ import (
 )
 
 func main() {
-    log := logrus.WithField("service", "my-service")
+    base := logrus.New()                          // *logrus.Logger — for httpware.Logger
+    log := base.WithField("service", "my-service") // *logrus.Entry  — for everything else
 
     // 1. Auth middleware — validates RS256 JWT, injects claims into context.
     auth := jwtauth.New(
@@ -183,7 +185,7 @@ func main() {
 
     // Global middleware (runs before auth).
     r.Use(httpware.RequestID)
-    r.Use(httpware.Logger(log))
+    r.Use(httpware.Logger(base)) // takes *logrus.Logger, not *logrus.Entry
     r.Use(httpware.SecurityHeaders)
     r.Use(httpware.BodyLimit(4 * 1024 * 1024)) // 4 MB
     r.Use(httpware.Recover(log))
@@ -216,7 +218,11 @@ func main() {
 
 ### apierror
 
-Constructor functions for all common HTTP error shapes. Every constructor returns `*AppError` which implements `error` and serialises itself as JSON when written to an `http.ResponseWriter`.
+Constructor functions for all common HTTP error shapes. Every constructor returns `*AppError` which implements `error` and serialises itself as JSON when written to an `http.ResponseWriter` via `WriteJSON`. The wire shape is wrapped in an `error` envelope:
+
+```json
+{"error": {"code": "not_found", "message": "user not found: 42"}}
+```
 
 ```go
 user, err := repo.GetByID(id)
@@ -229,22 +235,42 @@ apierror.Internal("database error").WriteJSON(w)
 
 Available constructors: `NotFound`, `BadRequest`, `Unauthorized`, `Forbidden`, `Conflict`, `ValidationError`, `Internal`, `ServiceUnavailable`.
 
+Two fluent helpers refine an error before it is written:
+
+```go
+// WithKey attaches an i18n key the frontend can translate (added to the JSON as "key").
+apierror.BadRequest("invalid store ID").WithKey("errors.invalidStoreId").WriteJSON(w)
+
+// WithDetails attaches an arbitrary structured payload (serialised as "details").
+apierror.ValidationError("validation failed", fieldErrors).WriteJSON(w)
+```
+
 ---
 
 ### ctxutil
 
-Typed helpers for every Socrate JWT claim that `jwtauth` injects into the context. Every `Get*` function is safe to call even when the value is absent — they return zero values (or `"freemium"` for plan).
+Typed helpers for every Socrate JWT claim that `jwtauth` injects into the context. Every `Get*` function returns a single value and is safe to call even when the value is absent — it returns the zero value (`uuid.Nil`, `""`, `0`, or `nil`), except `GetUserPlan`, which defaults to `"freemium"`, and `GetLogger`, which falls back to the standard logger.
 
 ```go
-tenantID, ok := ctxutil.GetTenantID(ctx)   // uuid.UUID
-userID, ok   := ctxutil.GetUserID(ctx)     // uuid.UUID
-role         := ctxutil.GetUserRole(ctx)   // string
-plan         := ctxutil.GetUserPlan(ctx)   // string — defaults to "freemium"
-email        := ctxutil.GetUserEmail(ctx)
-name         := ctxutil.GetUserName(ctx)
-requestID    := ctxutil.GetRequestID(ctx)
-logger       := ctxutil.GetLogger(ctx)     // *logrus.Entry — falls back to standard logger
+tenantID  := ctxutil.GetTenantID(ctx)    // uuid.UUID — uuid.Nil when absent
+tenantStr := ctxutil.GetTenantIDStr(ctx) // string — "" when absent (handy for logging)
+userID    := ctxutil.GetUserID(ctx)      // uuid.UUID — uuid.Nil when absent
+sub       := ctxutil.GetUserSub(ctx)     // string — raw Socrate subject (e.g. "42")
+role      := ctxutil.GetUserRole(ctx)    // string
+plan      := ctxutil.GetUserPlan(ctx)    // string — defaults to "freemium"
+email     := ctxutil.GetUserEmail(ctx)   // string (ID-token flows only)
+name      := ctxutil.GetUserName(ctx)    // string (ID-token flows only)
+requestID := ctxutil.GetRequestID(ctx)   // string
+logger    := ctxutil.GetLogger(ctx)      // *logrus.Entry — falls back to standard logger
+rawJWT    := ctxutil.GetRawJWT(ctx)      // string — bearer token for forwarding to socrate.Client
+
+// Multi-app role claims (app_roles) and the monotonic token_version:
+roles := ctxutil.GetAppRoles(ctx)             // map[string]string — clientID → role
+role  = ctxutil.GetAppRole(ctx, "my-app-id")  // role within a specific app, "" if none
+ver   := ctxutil.GetTokenVersion(ctx)         // int — 0 when absent
 ```
+
+> `GetTenantTier`/`WithTenantTier` are deprecated aliases for `GetUserPlan`/`WithUserPlan`; use the `*UserPlan` names in new code.
 
 ---
 
@@ -255,13 +281,15 @@ All middleware functions follow the standard `func(http.Handler) http.Handler` s
 | Middleware | Constructor |
 |-----------|-------------|
 | Request ID | `httpware.RequestID` |
-| Structured logger | `httpware.Logger(entry)` |
+| Structured logger | `httpware.Logger(logger)` — takes a `*logrus.Logger` |
 | Security headers | `httpware.SecurityHeaders` |
-| Body size limit | `httpware.BodyLimit(bytes)` |
-| Panic recovery | `httpware.Recover(logger)` |
+| Body size limit | `httpware.BodyLimit(maxBytes)` |
+| Panic recovery | `httpware.Recover(entry)` — takes a `*logrus.Entry` |
 | Per-route timeout | `httpware.Timeout(d)` |
 | Per-tenant rate limit | `httpware.NewRateLimiter(rps, burst)` |
-| Role-based access | `httpware.NewRBAC(roleMap, logger)` |
+| Role-based access | `httpware.NewRBAC(roleMap, entry)` |
+
+> Note the logger types differ: `Logger` takes the base `*logrus.Logger` (it derives a request-scoped `*logrus.Entry` per request), while `Recover` and `NewRBAC` take a pre-enriched `*logrus.Entry`.
 
 **RBAC — defining permissions:**
 
@@ -294,16 +322,19 @@ r.Group(func(r chi.Router) {
 
 ### gormlogger
 
-Bridges GORM's internal logger to logrus. Slow queries (configurable threshold) are logged at `Warn`; `ErrRecordNotFound` is demoted to `Debug` to avoid log noise in normal operation.
+Bridges GORM's internal logger to logrus. Slow queries (above the threshold) are logged at `Warn`; when `ignoreNotFound` is true, `ErrRecordNotFound` is demoted to `Debug` to avoid log noise in normal operation.
+
+`New` takes positional arguments — `New(entry, level, slowThreshold, ignoreNotFound)` — where `level` is a `gorm.io/gorm/logger.LogLevel`:
 
 ```go
+import glogger "gorm.io/gorm/logger"
+
 db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
     Logger: gormlogger.New(
-        log.WithField("component", "db"),
-        gormlogger.Config{
-            SlowThreshold:  200 * time.Millisecond,
-            IgnoreNotFound: true,
-        },
+        log.WithField("component", "db"), // *logrus.Entry
+        glogger.Warn,                     // minimum level (Silent/Error/Warn/Info)
+        200*time.Millisecond,             // slow-query threshold; 0 disables
+        true,                             // demote ErrRecordNotFound to Debug
     ),
 })
 ```
@@ -368,6 +399,21 @@ if err != nil {
 // On success Socrate returns an access_token, refresh_token, and id_token.
 ```
 
+**Beyond user CRUD**
+
+The client also wraps the full Socrate admin and OAuth surface. All admin methods forward the caller's JWT and require an admin/superadmin token; the OAuth/token methods authenticate with the client credentials.
+
+| Area | Methods |
+|------|---------|
+| App-scoped users | `ListUsers`, `GetUser`, `CreateUser`, `UpdateUserRole`, `DeleteUser`, `ResendVerification`, `ForcePasswordReset` |
+| Service-account (M2M) | `RegisterUser`, `InviteUserAsService`, `GetUserAsService`, `SendMagicLink` |
+| OAuth / OIDC | `GetCurrentUserProfile`, `RevokeToken`, `IntrospectToken` |
+| App management | `ListApps`, `GetApp`, `CreateApp`, `UpdateApp`, `DeleteApp`, `RotateSecret` |
+| Global user admin | `AdminListUsers`, `AdminGetUser`, `AdminDeleteUser`, `GetUserApps`, `BlockUser`, `UnlockUser`, `RevokeUserTokens` |
+| Superadmins | `ListSuperadmins`, `GetSuperadmin`, `CreateSuperadmin`, `UpdateSuperadmin`, `DeleteSuperadmin` |
+| Security monitoring | `GetThreatMetrics`, `ListBlockedIPs`, `BlockIP`, `UnblockIP`, `GetIPReputation`, `GetActivityLogs` |
+| Dashboard & audit | `GetDashboardStats`, `GetDashboardHealth`, `ListAdminLogs`, `GetAdminLog` |
+
 ---
 
 ### jwtauth
@@ -412,14 +458,17 @@ reg = tiering.NewPlanRegistry("starter", "growth", "enterprise")
 gate := tiering.NewGate(tiering.DefaultRegistry(), logger, "/billing")
 
 r.With(gate.Require(tiering.PlanPro)).Post("/ai/narrate", handler)
-// Freemium users receive 403: {"error":"plan_required","upgradeUrl":"/billing"}
+// Freemium users receive 403 with the standard error envelope:
+// {"error":{"code":"upgrade_required",
+//           "message":"This feature requires the pro plan or above",
+//           "details":{"plan":"freemium","requiredPlan":"pro","upgradeUrl":"/billing"}}}
 ```
 
-**PolicyService** — per-feature rules stored in Postgres, cached in-process for 5 minutes. Implement `tiering.PolicyRepository` with your GORM repository to plug in persistence.
+**PolicyService** — per-feature rules stored in Postgres, cached in-process for 5 minutes. Implement `tiering.PolicyRepository` with your GORM repository to plug in persistence, then construct the service with `tiering.NewPolicyService(repo, registry, tiering.DefaultPlanSelector, logger)`. Every method takes a `context.Context` so cancellation and tracing propagate to the DB.
 
 ```go
 // Seed baseline rules at startup:
-svc.SeedDefaults([]tiering.FeaturePolicy{
+svc.SeedDefaults(ctx, []tiering.FeaturePolicy{
     {
         Feature: "ai_narration", Category: "ai", Label: "AI Narration",
         FeatureType: tiering.FeatureTypeAccess,
@@ -438,8 +487,8 @@ svc.SeedDefaults([]tiering.FeaturePolicy{
 
 // In a handler:
 plan    := ctxutil.GetUserPlan(ctx)
-allowed := svc.IsAllowed("ai_narration", plan)
-limit   := svc.NumericLimit("export_limit", plan)
+allowed := svc.IsAllowed(ctx, "ai_narration", plan) // false on deny or error
+limit   := svc.NumericLimit(ctx, "export_limit", plan) // -1 = unlimited, 0 if absent
 ```
 
 ---
@@ -459,10 +508,15 @@ ai := aigateway.New(aigateway.Config{
 
 result, err := ai.Call(ctx, prompt)
 
+// Override the token ceiling for a single call:
+result, err = ai.CallWithMaxTokens(ctx, prompt, 4000)
+
 // Parse a JSON object embedded in an AI prose response:
 var data MyStruct
-err = aigateway.ExtractJSONInto(result, &data)
+err = aigateway.ExtractJSONInto(result, &data) // or ExtractJSON(result) for the raw string
 ```
+
+Set `Config.AllowedModels` to restrict which Claude models may be used; a call with an out-of-list model returns an error. `Client.IsConfigured()` reports whether an API key is present (handy for feature-flagging AI endpoints), and `Client.Provider()` returns the configured provider name.
 
 For tests, `aigateway.ClientForTest(provider, apiKey, serverURL)` points both provider base URLs at an `httptest.Server` so AI-dependent handlers can be exercised without a live API key.
 
@@ -474,7 +528,7 @@ A generic LRU+TTL cache for AI narration results, keyed by tenant and a content-
 
 ```go
 cache := ainarration.NewNarrationCache(ainarration.DefaultCacheConfig())
-// DefaultCacheConfig: capacity = 1000 entries, TTL = 15 min
+// DefaultCacheConfig: MaxSize = 200 entries, TTL = 2 h
 
 // Same inputs always produce the same key (content-addressed):
 key := ainarration.CacheKey("plan_narration", userRole, myContextStruct)
@@ -494,14 +548,36 @@ cache.Put(tenantID, key, &ainarration.NarrationOutput{
 
 ### pagination
 
-Query-parameter parsing for `page` and `pageSize`, with defaults and upper-bound clamping. Returns a `PagedResponse` envelope for consistent list API shapes.
+Query-parameter parsing for `page` and `per_page`, with defaults and upper-bound clamping (`DefaultPerPage = 20`, `MaxPerPage = 100`). Returns a `PagedResponse` envelope for consistent list API shapes.
 
 ```go
-params := pagination.Parse(r)          // page=1, pageSize=20 by default
-offset := params.Offset()             // (page-1) * pageSize
+params := pagination.Parse(r)   // reads ?page & ?per_page; page=1, perPage=20 by default
+offset := params.Offset         // field (not a method): (page-1) * perPage
 
-resp := pagination.NewPagedResponse(items, total, params)
-// {"data": [...], "page": 1, "pageSize": 20, "totalCount": 142}
+resp := pagination.NewPagedResponse(items, params, total) // (data, params, totalItems)
+// {"data": [...], "page": 1, "perPage": 20, "totalItems": 142, "totalPages": 8}
+```
+
+---
+
+### buildinfo
+
+Exposes build-time metadata injected via `-ldflags` and a ready-to-mount version handler. The `Version`, `BuildTime`, and `GitCommit` package variables are link-time targets; they fall back to safe defaults (`Version = "dev"`) when unset.
+
+```makefile
+LDFLAGS := \
+    -X github.com/ovander/backendkit/buildinfo.Version=$(VERSION) \
+    -X github.com/ovander/backendkit/buildinfo.BuildTime=$(BUILD_TIME) \
+    -X github.com/ovander/backendkit/buildinfo.GitCommit=$(GIT_COMMIT)
+```
+
+```go
+// Mount on an unauthenticated route so monitoring tools can read it tokenless.
+r.Get("/api/v1/version", buildinfo.Handler())
+
+// Or read the struct directly (adds GoVersion from runtime.Version()):
+info := buildinfo.Get()
+// {"version":"v1.5.1","buildTime":"...","gitCommit":"a1b2c3d","goVersion":"go1.25"}
 ```
 
 ---
