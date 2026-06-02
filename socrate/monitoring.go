@@ -320,7 +320,12 @@ func (c *Client) StreamSecurityEvents(ctx context.Context, opts StreamEventOptio
 		}
 	}
 	if err := scanner.Err(); err != nil {
+		// A cancelled/expired context aborts the body read; surface it as the
+		// context error rather than a wrapped I/O error.
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("read event stream: %w", err)
 	}
-	return nil
+	return ctx.Err()
 }
