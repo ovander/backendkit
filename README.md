@@ -399,6 +399,8 @@ db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 
 ### socrate
 
+> 📘 **Integrating an app?** See the [Socrate + backendkit Client Integration Guide](docs/CLIENT-INTEGRATION.md) — an end-to-end walkthrough for backend and frontend teams (middleware wiring, the two auth modes, login flows, error handling, and a full method reference).
+
 > **Socrate dependency note.** This client is purpose-built for Socrate and is not a generic OAuth2 or OIDC library. It assumes Socrate's specific API surface (dual user/admin ports, `client_credentials` service-account flow, magic-link endpoint). It will not work against Keycloak, Auth0, or other providers.
 
 The client uses a dual-auth strategy: user-scoped calls forward the caller's JWT; service-account calls acquire a `client_credentials` token automatically and cache it until near-expiry.
