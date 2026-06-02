@@ -14,6 +14,9 @@ type Params struct {
 	Offset  int `json:"-"`
 }
 
+// DefaultPerPage and MaxPerPage bound the page size derived from the request:
+// an unset or invalid per_page falls back to DefaultPerPage, and any larger
+// value is clamped to MaxPerPage.
 const (
 	DefaultPerPage = 20
 	MaxPerPage     = 100

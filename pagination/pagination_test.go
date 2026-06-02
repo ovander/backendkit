@@ -18,8 +18,8 @@ func TestParse(t *testing.T) {
 		{"page=0&per_page=0", 1, 20, 0},
 		{"page=2&per_page=10", 2, 10, 10},
 		{"page=3&per_page=5", 3, 5, 10},
-		{"per_page=150", 1, 100, 0},  // clamped to MaxPerPage
-		{"page=-1", 1, 20, 0},        // negative → default
+		{"per_page=150", 1, 100, 0}, // clamped to MaxPerPage
+		{"page=-1", 1, 20, 0},       // negative → default
 	}
 
 	for _, tt := range tests {
@@ -42,13 +42,13 @@ func TestNewPagedResponse(t *testing.T) {
 	params := pagination.Params{Page: 1, PerPage: 10, Offset: 0}
 
 	tests := []struct {
-		total      int64
-		wantPages  int
+		total     int64
+		wantPages int
 	}{
 		{0, 0},
 		{1, 1},
-		{10, 1},  // exactly one page
-		{11, 2},  // one item on second page
+		{10, 1}, // exactly one page
+		{11, 2}, // one item on second page
 		{20, 2},
 		{21, 3},
 	}

@@ -168,7 +168,7 @@ func (c *Client) callOpenAI(ctx context.Context, prompt string, maxTokens int) (
 	if err != nil {
 		return "", fmt.Errorf("openai request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("OpenAI API HTTP %d: %s", resp.StatusCode, b)
@@ -176,7 +176,9 @@ func (c *Client) callOpenAI(ctx context.Context, prompt string, maxTokens int) (
 
 	var result struct {
 		Choices []struct {
-			Message struct{ Content string `json:"content"` } `json:"message"`
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
 		} `json:"choices"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -220,10 +222,10 @@ func (c *Client) callClaude(ctx context.Context, prompt string, maxTokens int) (
 	if err != nil {
 		return "", fmt.Errorf("claude request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("Claude API HTTP %d: %s", resp.StatusCode, b)
+		return "", fmt.Errorf("claude API HTTP %d: %s", resp.StatusCode, b)
 	}
 
 	var result struct {

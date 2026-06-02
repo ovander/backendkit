@@ -170,7 +170,7 @@ func (c *Client) doWithServiceToken(ctx context.Context, method, fullURL string,
 
 // readBody reads and closes the response body.
 func readBody(r *http.Response) ([]byte, error) {
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	return io.ReadAll(r.Body)
 }
 
@@ -337,11 +337,11 @@ type CreateUserRequest struct {
 // CreateUserResult is returned by CreateUser, RegisterUser, and InviteUserAsService.
 // It reflects the one-time invite information returned by Socrate.
 type CreateUserResult struct {
-	UserID     uint   `json:"user_id"`
+	UserID      uint   `json:"user_id"`
 	InviteToken string `json:"invite_token"`
-	Role       string `json:"role"`
-	EmailSent  bool   `json:"email_sent"`
-	EmailError string `json:"email_error,omitempty"`
+	Role        string `json:"role"`
+	EmailSent   bool   `json:"email_sent"`
+	EmailError  string `json:"email_error,omitempty"`
 }
 
 // ServiceInviteRequest is the body for the service-account invite endpoint.
