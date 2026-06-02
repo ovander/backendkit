@@ -50,18 +50,21 @@ func New(entry *logrus.Entry, level glogger.LogLevel, slowThreshold time.Duratio
 	}
 }
 
+// LogMode returns a copy of the logger configured at the given level.
 func (l *GormLogger) LogMode(level glogger.LogLevel) glogger.Interface {
 	clone := *l
 	clone.level = level
 	return &clone
 }
 
+// Info logs a message at info level when the configured level permits it.
 func (l *GormLogger) Info(ctx context.Context, s string, args ...interface{}) {
 	if l.level >= glogger.Info {
 		l.entry.WithContext(ctx).Infof(s, args...)
 	}
 }
 
+// Warn logs a message at warn level when the configured level permits it.
 func (l *GormLogger) Warn(ctx context.Context, s string, args ...interface{}) {
 	if l.level >= glogger.Warn {
 		l.entry.WithContext(ctx).Warnf(s, args...)
@@ -74,6 +77,8 @@ func (l *GormLogger) Error(ctx context.Context, s string, args ...interface{}) {
 	}
 }
 
+// Trace logs a single SQL statement with its duration and row count, applying
+// the slow-query and not-found handling configured on the logger.
 func (l *GormLogger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
 	if l.level == glogger.Silent {
 		return

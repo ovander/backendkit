@@ -170,7 +170,7 @@ func (c *Client) doWithServiceToken(ctx context.Context, method, fullURL string,
 
 // readBody reads and closes the response body.
 func readBody(r *http.Response) ([]byte, error) {
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	return io.ReadAll(r.Body)
 }
 
