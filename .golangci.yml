@@ -1,3 +1,5 @@
+version: "2"
+
 run:
   timeout: 5m
 
@@ -8,13 +10,13 @@ linters:
     - staticcheck
     - unused
     - misspell
-    - goimports
     - revive
-  disable:
-    - depguard
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: false
 
-linters-settings:
-  revive:
-    rules:
-      - name: exported
-        disabled: false
+formatters:
+  enable:
+    - goimports

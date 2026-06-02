@@ -16,8 +16,8 @@ package tiering
 // PlanRegistry holds an ordered list of plan names, lowest to highest tier.
 // Pass it to Gate and PolicyService so both use the same ordering.
 type PlanRegistry struct {
-	plans []string          // ordered: index 0 = lowest tier
-	index map[string]int    // plan name → position
+	plans []string       // ordered: index 0 = lowest tier
+	index map[string]int // plan name → position
 }
 
 // NewPlanRegistry creates a PlanRegistry from the given ordered plan names.

@@ -19,9 +19,9 @@ import (
 func ExamplePlanRegistry() {
 	reg := tiering.NewPlanRegistry("starter", "growth", "enterprise")
 
-	fmt.Println(reg.TierAtLeast("growth", "starter"))              // growth >= starter → true
-	fmt.Println(reg.TierAtLeast("starter", "growth"))              // starter < growth  → false
-	fmt.Println(reg.TierAtLeast("unknown", "starter"))             // not in registry   → false
+	fmt.Println(reg.TierAtLeast("growth", "starter"))                 // growth >= starter → true
+	fmt.Println(reg.TierAtLeast("starter", "growth"))                 // starter < growth  → false
+	fmt.Println(reg.TierAtLeast("unknown", "starter"))                // not in registry   → false
 	fmt.Println(reg.TierAtLeast(reg.Normalise("unknown"), "starter")) // normalise first → true
 	// Output:
 	// true
@@ -35,8 +35,8 @@ func ExamplePlanRegistry() {
 func ExampleDefaultRegistry() {
 	reg := tiering.DefaultRegistry()
 
-	fmt.Println(reg.Normalise("pro"))       // known → unchanged
-	fmt.Println(reg.Normalise("PREMIUM"))   // unknown → lowest tier
+	fmt.Println(reg.Normalise("pro"))     // known → unchanged
+	fmt.Println(reg.Normalise("PREMIUM")) // unknown → lowest tier
 	// Output:
 	// pro
 	// freemium

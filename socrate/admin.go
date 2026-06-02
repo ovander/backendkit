@@ -523,10 +523,10 @@ type BlockIPRequest struct {
 
 // IPReputation holds the reputation score for an IP address.
 type IPReputation struct {
-	IPAddress  string  `json:"ip_address"`
-	Score      float64 `json:"score"`
-	IsBlocked  bool    `json:"is_blocked"`
-	FailedAuth int64   `json:"failed_auth"`
+	IPAddress  string     `json:"ip_address"`
+	Score      float64    `json:"score"`
+	IsBlocked  bool       `json:"is_blocked"`
+	FailedAuth int64      `json:"failed_auth"`
 	LastSeen   *time.Time `json:"last_seen,omitempty"`
 }
 

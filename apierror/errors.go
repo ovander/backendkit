@@ -11,8 +11,8 @@ import (
 // AppError is the standard error type returned by services and handlers.
 type AppError struct {
 	Code       string `json:"code"`
-	Key        string `json:"key,omitempty"`    // i18n key — frontend translates this
-	Message    string `json:"message"`           // English dev-facing message (logs only)
+	Key        string `json:"key,omitempty"` // i18n key — frontend translates this
+	Message    string `json:"message"`       // English dev-facing message (logs only)
 	StatusCode int    `json:"-"`
 	Details    any    `json:"details,omitempty"`
 }

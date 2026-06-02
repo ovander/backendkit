@@ -337,11 +337,11 @@ type CreateUserRequest struct {
 // CreateUserResult is returned by CreateUser, RegisterUser, and InviteUserAsService.
 // It reflects the one-time invite information returned by Socrate.
 type CreateUserResult struct {
-	UserID     uint   `json:"user_id"`
+	UserID      uint   `json:"user_id"`
 	InviteToken string `json:"invite_token"`
-	Role       string `json:"role"`
-	EmailSent  bool   `json:"email_sent"`
-	EmailError string `json:"email_error,omitempty"`
+	Role        string `json:"role"`
+	EmailSent   bool   `json:"email_sent"`
+	EmailError  string `json:"email_error,omitempty"`
 }
 
 // ServiceInviteRequest is the body for the service-account invite endpoint.
