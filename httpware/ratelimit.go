@@ -2,13 +2,13 @@ package httpware
 
 import (
 	"net/http"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/time/rate"
 
+	"github.com/ovander/backendkit/apierror"
 	"github.com/ovander/backendkit/ctxutil"
 )
 
@@ -112,10 +112,15 @@ func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 		}
 
 		if !rl.getLimiter(tenantID).Allow() {
-			w.Header().Set("Retry-After", strconv.Itoa(1))
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusTooManyRequests)
-			w.Write([]byte(`{"error":{"code":"rate_limited","message":"too many requests"}}`)) //nolint:errcheck
+			w.Header().Set("Retry-After", "1")
+			// "rate_limited" is a deliberately specific code (kept stable for
+			// wire compatibility); routed through apierror so the JSON envelope
+			// stays single-sourced with the rest of the library.
+			(&apierror.AppError{
+				Code:       "rate_limited",
+				StatusCode: http.StatusTooManyRequests,
+				Message:    "too many requests",
+			}).WriteJSON(w)
 			return
 		}
 

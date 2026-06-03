@@ -1,6 +1,7 @@
 package apierror_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -39,6 +40,24 @@ func ExampleValidationError() {
 	fmt.Println(rec.Code)
 	// Output:
 	// 422
+}
+
+// ExampleWrite demonstrates emitting an error for a dynamic status code in a
+// single call — handy when proxying an upstream response whose status isn't
+// known ahead of time. The code is derived from the status automatically.
+func ExampleWrite() {
+	rec := httptest.NewRecorder()
+	apierror.Write(rec, http.StatusBadGateway, "upstream timed out")
+	fmt.Println(rec.Code)
+
+	var body struct {
+		Error apierror.AppError `json:"error"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	fmt.Println(body.Error.Code)
+	// Output:
+	// 502
+	// bad_gateway
 }
 
 // ExampleAppError_WriteJSON demonstrates writing any AppError to an
