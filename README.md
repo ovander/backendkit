@@ -53,7 +53,7 @@ backendkit packages that foundation into a single, versioned dependency so every
 ## Installation
 
 ```bash
-go get github.com/ovander/backendkit@v1.5.1
+go get github.com/ovander/backendkit@v1.7.0
 ```
 
 ```go
@@ -62,7 +62,7 @@ module github.com/your-org/my-service
 
 go 1.25
 
-require github.com/ovander/backendkit v1.5.1
+require github.com/ovander/backendkit v1.7.0
 ```
 
 ---
@@ -649,7 +649,7 @@ r.Get("/api/v1/version", buildinfo.Handler())
 
 // Or read the struct directly (adds GoVersion from runtime.Version()):
 info := buildinfo.Get()
-// {"version":"v1.5.1","buildTime":"...","gitCommit":"a1b2c3d","goVersion":"go1.25"}
+// {"version":"v1.2.3","buildTime":"...","gitCommit":"a1b2c3d","goVersion":"go1.25"}
 ```
 
 ---
