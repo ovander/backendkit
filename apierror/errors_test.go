@@ -21,7 +21,9 @@ func TestConstructors(t *testing.T) {
 		{"Unauthorized", apierror.Unauthorized("no"), http.StatusUnauthorized, "unauthorized"},
 		{"Forbidden", apierror.Forbidden("no"), http.StatusForbidden, "forbidden"},
 		{"Conflict", apierror.Conflict("dup"), http.StatusConflict, "conflict"},
+		{"TooManyRequests", apierror.TooManyRequests("slow down"), http.StatusTooManyRequests, "too_many_requests"},
 		{"Internal", apierror.Internal("oops"), http.StatusInternalServerError, "internal_error"},
+		{"BadGateway", apierror.BadGateway("upstream down"), http.StatusBadGateway, "bad_gateway"},
 		{"ServiceUnavailable", apierror.ServiceUnavailable("down"), http.StatusServiceUnavailable, "service_unavailable"},
 		{"ValidationError", apierror.ValidationError("invalid", nil), http.StatusUnprocessableEntity, "validation_error"},
 	}
@@ -68,5 +70,59 @@ func TestValidationErrorDetails(t *testing.T) {
 	err := apierror.ValidationError("validation failed", details)
 	if err.Details == nil {
 		t.Error("Details should not be nil")
+	}
+}
+
+func TestNew_DerivesCodeAndPreservesStatus(t *testing.T) {
+	tests := []struct {
+		status   int
+		wantCode string
+	}{
+		{http.StatusBadRequest, "bad_request"},
+		{http.StatusNotFound, "not_found"},
+		{http.StatusTooManyRequests, "too_many_requests"},
+		{http.StatusBadGateway, "bad_gateway"},
+		{http.StatusInternalServerError, "internal_error"},
+		{http.StatusTeapot, "error"}, // unmapped → generic fallback
+	}
+	for _, tt := range tests {
+		err := apierror.New(tt.status, "boom")
+		if err.StatusCode != tt.status {
+			t.Errorf("status %d: StatusCode = %d, want %d", tt.status, err.StatusCode, tt.status)
+		}
+		if err.Code != tt.wantCode {
+			t.Errorf("status %d: Code = %q, want %q", tt.status, err.Code, tt.wantCode)
+		}
+	}
+}
+
+func TestNew_MatchesConstructorEnvelope(t *testing.T) {
+	// New(400, …) must serialise identically to BadRequest(…).
+	gen := httptest.NewRecorder()
+	apierror.New(http.StatusBadRequest, "bad").WriteJSON(gen)
+
+	typed := httptest.NewRecorder()
+	apierror.BadRequest("bad").WriteJSON(typed)
+
+	if gen.Body.String() != typed.Body.String() {
+		t.Errorf("New envelope %q != BadRequest envelope %q", gen.Body.String(), typed.Body.String())
+	}
+}
+
+func TestWrite(t *testing.T) {
+	w := httptest.NewRecorder()
+	apierror.Write(w, http.StatusBadGateway, "upstream timed out")
+
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502", w.Code)
+	}
+	var body struct {
+		Error apierror.AppError `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	if body.Error.Code != "bad_gateway" {
+		t.Errorf("body.error.code = %q, want bad_gateway", body.Error.Code)
 	}
 }

@@ -289,7 +289,14 @@ if errors.Is(err, gorm.ErrRecordNotFound) {
 apierror.Internal("database error").WriteJSON(w)
 ```
 
-Available constructors: `NotFound`, `BadRequest`, `Unauthorized`, `Forbidden`, `Conflict`, `ValidationError`, `Internal`, `ServiceUnavailable`.
+Available constructors: `NotFound`, `BadRequest`, `Unauthorized`, `Forbidden`, `Conflict`, `ValidationError`, `TooManyRequests`, `Internal`, `BadGateway`, `ServiceUnavailable`.
+
+When the status is **dynamic** (e.g. proxying an upstream response) and the typed constructors don't fit, `New(status, msg)` builds an `AppError` for any status — deriving the same machine code the typed constructors use — and `Write(w, status, msg)` builds and writes it in one call:
+
+```go
+// Identical envelope to the typed constructors, with the caller's status preserved:
+apierror.Write(w, resp.StatusCode, "upstream rejected the request")
+```
 
 Two fluent helpers refine an error before it is written:
 
