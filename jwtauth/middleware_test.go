@@ -1,10 +1,12 @@
 package jwtauth_test
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -249,5 +251,69 @@ func TestHandler_NoAudienceConfigured_IgnoresAud(t *testing.T) {
 	}
 	if code := serveWithToken(t, m, key, claimsWithAudience()); code != http.StatusOK {
 		t.Errorf("expected 200 for no-aud token when validation disabled, got %d", code)
+	}
+}
+
+// ─── Revocation check (F-2 / INV-3) ─────────────────────────────────────────
+
+func claimsWithVersion(sub string, version int) jwtauth.SocrateClaims {
+	return jwtauth.SocrateClaims{
+		TokenVersion: version,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   sub,
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+	}
+}
+
+func TestHandler_RevocationCheck_AllowsLiveToken(t *testing.T) {
+	key := generateTestKey(t)
+	srv := jwksServer(t, "k1", key)
+	defer srv.Close()
+
+	var gotSub string
+	var gotVersion int
+	check := func(_ context.Context, c *jwtauth.SocrateClaims) error {
+		gotSub, gotVersion = c.Subject, c.TokenVersion
+		return nil // live
+	}
+	m := jwtauth.New(srv.URL, "", testLogger(), jwtauth.WithRevocationCheck(check))
+
+	if code := serveWithToken(t, m, key, claimsWithVersion("42", 7)); code != http.StatusOK {
+		t.Errorf("expected 200 for a live token, got %d", code)
+	}
+	if gotSub != "42" || gotVersion != 7 {
+		t.Errorf("checker received sub=%q version=%d, want \"42\"/7", gotSub, gotVersion)
+	}
+}
+
+func TestHandler_RevocationCheck_RejectsRevokedToken(t *testing.T) {
+	key := generateTestKey(t)
+	srv := jwksServer(t, "k1", key)
+	defer srv.Close()
+
+	check := func(_ context.Context, _ *jwtauth.SocrateClaims) error {
+		return errors.New("token_version superseded")
+	}
+	m := jwtauth.New(srv.URL, "", testLogger(), jwtauth.WithRevocationCheck(check))
+
+	// A 401 (rather than the handler's 200) proves the request was rejected
+	// before reaching the handler.
+	if code := serveWithToken(t, m, key, claimsWithVersion("42", 1)); code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for a revoked token, got %d", code)
+	}
+}
+
+// TestHandler_NoRevocationCheck_AllowsToken is the backward-compatibility
+// regression test: with no checker configured the token is accepted as before.
+func TestHandler_NoRevocationCheck_AllowsToken(t *testing.T) {
+	key := generateTestKey(t)
+	srv := jwksServer(t, "k1", key)
+	defer srv.Close()
+
+	m := jwtauth.New(srv.URL, "", testLogger()) // no WithRevocationCheck
+
+	if code := serveWithToken(t, m, key, claimsWithVersion("42", 1)); code != http.StatusOK {
+		t.Errorf("expected 200 when revocation checking is disabled, got %d", code)
 	}
 }

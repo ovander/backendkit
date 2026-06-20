@@ -26,6 +26,16 @@ All notable changes to backendkit are documented here. The format is based on
 
 ### Added
 
+- **jwtauth: opt-in token revocation hook.** New `jwtauth.RevocationChecker` type
+  and `jwtauth.WithRevocationCheck(fn)` option. The supplied function runs on every
+  request after signature/claim validation, receiving the request context and the
+  parsed claims; returning an error rejects the request with 401. Use it to enforce
+  `token_version` (logout / password-change / admin revocation) or a `jti` denylist
+  — checks that local signature validation alone cannot. Opt-in: with none
+  configured, a token stays valid until `exp` as before. Addresses **F-2 / INV-3**
+  (`SECURITY-AUDIT.md`, `SECURITY-ARCHITECTURE.md`).
+  ([#16](https://github.com/ovander/backendkit/issues/16))
+
 - **httpware: `RequireTenant` middleware.** A plain
   `func(http.Handler) http.Handler` that rejects requests with no tenant ID in
   context (`ctxutil.GetTenantID == uuid.Nil`) with 401 Unauthorized, so

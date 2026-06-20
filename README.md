@@ -526,6 +526,24 @@ Audience validation is opt-in for backward compatibility: when `WithAudience` is
 omitted the `aud` claim is not checked. New services should set it. A token that
 lacks an `aud` claim is rejected once an expected audience is configured.
 
+**Revocation (optional).** Local signature validation alone keeps a token valid
+until its `exp`, even after logout or a password change. Pass
+`jwtauth.WithRevocationCheck` to run a per-request check after validation —
+typically comparing the token's `token_version` against the current value for the
+user; returning an error rejects the request with 401:
+
+```go
+auth := jwtauth.New(jwksURL, issuer, logger,
+    jwtauth.WithRevocationCheck(func(ctx context.Context, c *jwtauth.SocrateClaims) error {
+        if c.TokenVersion < store.CurrentTokenVersion(ctx, c.Subject) {
+            return errors.New("token_version superseded")
+        }
+        return nil
+    }))
+```
+
+The check is opt-in: with none configured, behaviour is unchanged.
+
 ---
 
 ### tiering
