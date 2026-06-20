@@ -8,6 +8,14 @@ All notable changes to backendkit are documented here. The format is based on
 
 ### Security
 
+- **gormlogger: opt-in SQL redaction.** New `gormlogger.WithSQLRedaction()` option
+  omits the SQL statement from log records (logs `sql: "[redacted]"`, keeping
+  timing/row-count/caller). GORM hands the logger SQL with bound parameter values
+  already interpolated — which can contain PII or secrets — so production loggers
+  should enable it. Opt-in; default behaviour unchanged. Addresses **F-9 / INV-10**
+  (`SECURITY-AUDIT.md`, `SECURITY-ARCHITECTURE.md`).
+  ([#26](https://github.com/ovander/backendkit/issues/26))
+
 - **jwtauth / socrate / aigateway: bound upstream response reads.** All reads of
   upstream HTTP bodies are now capped with `io.LimitReader` — JWKS at 1 MiB,
   Socrate and AI-provider responses at 10 MiB — so a compromised/MITM or oversized

@@ -35,6 +35,31 @@ func TestTrace_SlowQuery(t *testing.T) {
 	}
 }
 
+func TestTrace_SQLRedaction(t *testing.T) {
+	var buf bytes.Buffer
+	l := logrus.New()
+	l.SetOutput(&buf)
+	l.SetFormatter(&logrus.TextFormatter{DisableTimestamp: true})
+	gl := gormlogger.New(logrus.NewEntry(l), glogger.Warn, 100*time.Millisecond, true,
+		gormlogger.WithSQLRedaction())
+
+	// A slow query carrying a sensitive value in the interpolated SQL.
+	gl.Trace(context.Background(), time.Now().Add(-200*time.Millisecond), func() (string, int64) {
+		return "SELECT * FROM users WHERE email = 'secret@example.com'", 1
+	}, nil)
+
+	out := buf.String()
+	if strings.Contains(out, "secret@example.com") {
+		t.Errorf("redaction failed: SQL value leaked into log: %s", out)
+	}
+	if !strings.Contains(out, "[redacted]") {
+		t.Errorf("expected [redacted] placeholder, got: %s", out)
+	}
+	if !strings.Contains(out, "slow sql query") {
+		t.Errorf("expected the query to still be logged (timing/caller), got: %s", out)
+	}
+}
+
 func TestTrace_ErrorLogged(t *testing.T) {
 	var buf bytes.Buffer
 	gl := newLogger(&buf, glogger.Error)
