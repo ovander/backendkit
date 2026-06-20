@@ -9,6 +9,7 @@
 package jwtauth
 
 import (
+	"context"
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
@@ -76,12 +77,13 @@ type jwksResponse struct {
 
 // Middleware validates RS256 JWTs using RSA public keys from a JWKS endpoint.
 type Middleware struct {
-	jwksURL    string
-	issuer     string
-	audience   string
-	logger     *logrus.Entry
-	httpClient *http.Client
-	cacheTTL   time.Duration
+	jwksURL         string
+	issuer          string
+	audience        string
+	revocationCheck RevocationChecker
+	logger          *logrus.Entry
+	httpClient      *http.Client
+	cacheTTL        time.Duration
 
 	mu        sync.RWMutex
 	keys      map[string]*rsa.PublicKey
@@ -90,6 +92,17 @@ type Middleware struct {
 
 // Option configures optional Middleware behaviour. Pass options to New.
 type Option func(*Middleware)
+
+// RevocationChecker reports whether an already-validated token is still live.
+// It runs after signature, algorithm, issuer, audience and expiry checks have
+// passed, receiving the request context and the parsed claims. Returning a
+// non-nil error rejects the request with 401.
+//
+// Use it to enforce revocation that signature validation alone cannot — most
+// commonly comparing claims.TokenVersion against the current value for
+// claims.Subject (incremented on password change / logout), or consulting a
+// jti denylist via claims.ID.
+type RevocationChecker func(ctx context.Context, claims *SocrateClaims) error
 
 // WithAudience enables JWT audience ("aud") validation. When set, a token is
 // accepted only if its aud claim contains expectedAudience — typically this
@@ -101,6 +114,26 @@ type Option func(*Middleware)
 // that lacks an aud claim is rejected when an expected audience is configured.
 func WithAudience(expectedAudience string) Option {
 	return func(m *Middleware) { m.audience = expectedAudience }
+}
+
+// WithRevocationCheck enables a post-validation revocation check. The supplied
+// function runs on every request after the token's signature and claims have
+// been validated; a non-nil return rejects the request with 401.
+//
+// Revocation is opt-in for backward compatibility: with no checker configured a
+// token remains accepted until its exp, regardless of token_version. Services
+// that need logout / password-change / admin revocation to take effect before
+// expiry should supply one, e.g.:
+//
+//	auth := jwtauth.New(jwksURL, issuer, logger,
+//	    jwtauth.WithRevocationCheck(func(ctx context.Context, c *jwtauth.SocrateClaims) error {
+//	        if c.TokenVersion < store.CurrentTokenVersion(ctx, c.Subject) {
+//	            return errors.New("token_version superseded")
+//	        }
+//	        return nil
+//	    }))
+func WithRevocationCheck(fn RevocationChecker) Option {
+	return func(m *Middleware) { m.revocationCheck = fn }
 }
 
 // New creates a Middleware that validates tokens against the JWKS at jwksURL.
@@ -139,6 +172,16 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 			m.logger.WithError(err).Warn("token validation failed")
 			apierror.Unauthorized("invalid or expired token").WriteJSON(w)
 			return
+		}
+
+		// Optional revocation check (e.g. token_version / denylist). Runs after
+		// validation so a revoked token never has its identity injected.
+		if m.revocationCheck != nil {
+			if err := m.revocationCheck(r.Context(), claims); err != nil {
+				m.logger.WithError(err).Warn("token revoked")
+				apierror.Unauthorized("token revoked").WriteJSON(w)
+				return
+			}
 		}
 
 		ctx := r.Context()
