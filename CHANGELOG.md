@@ -6,6 +6,18 @@ All notable changes to backendkit are documented here. The format is based on
 
 ## [Unreleased]
 
+### Security
+
+- **Build with a patched Go toolchain (`go1.26.4`).** Added a `toolchain go1.26.4`
+  directive to `go.mod` and bumped CI to Go 1.26.4, clearing 11 Go standard-library
+  vulnerabilities reported by `govulncheck` (GO-2026-4599 … GO-2026-5039 in
+  `crypto/x509`, `crypto/tls`, `net`, `net/http`, `net/textproto`, `net/url`),
+  reachable through the HTTP/TLS client paths in `aigateway` and `socrate`. No
+  library code changed; these were stdlib issues fixed by the toolchain upgrade.
+  The `go` directive stays at `1.25.0`, so consumers on Go 1.25 are unaffected (the
+  `toolchain` directive applies only when backendkit is the main module).
+  ([#10](https://github.com/ovander/backendkit/issues/10))
+
 ### Added
 
 - **jwtauth: opt-in JWT audience (`aud`) validation.** New `jwtauth.Option`
