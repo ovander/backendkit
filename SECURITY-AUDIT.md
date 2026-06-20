@@ -9,6 +9,14 @@ for multiple production SaaS apps (README §"Used by" — Kerplan, a multi-tenan
 enterprise SaaS, `README.md:711`). Every exported package is assumed
 security-critical until proven otherwise.
 
+> **⚠️ Remediation update — 2026-06-20 (post v1.8.0).** This audit was written
+> against commit `46105b1` (pre-remediation); the original analysis is preserved
+> for the record. Since then a remediation cycle shipped in **v1.8.0**:
+> **F-1, F-2, F-3, F-10 are fixed** and the supply-chain items (stale `golang-jwt`
+> pin, Go stdlib CVEs) are cleared — `govulncheck` is clean on the Go 1.26.4
+> toolchain. **F-4 is partially mitigated; F-5, F-7, F-8, F-9, F-17 remain open.**
+> Status is annotated in the table below and in §16.
+
 ---
 
 ## 1. Executive Summary
@@ -22,18 +30,19 @@ However, **as a *security foundation* it has structural gaps that matter at
 enterprise scale.** The most serious are not bugs in the code that exists, but
 **security controls a buyer would assume are present and that are not**:
 
-| # | Severity | Finding | Origin |
-|---|----------|---------|--------|
-| F-1 | **High** | JWT **audience (`aud`) is never validated** — tokens are reusable across every app sharing the Socrate issuer | Framework |
-| F-2 | **High** | **Token revocation / `token_version` is never enforced** on the hot path | Framework gap |
-| F-3 | **High** | **Tenant isolation is fail-open and absent by default** (`tenant_id` not issued by default server; `uuid.Nil` flows downstream) | Framework + Config |
-| F-4 | **High** | **Per-tenant rate limiter is a no-op in the default configuration** and fails open | Framework + Config |
-| F-5 | Medium | Issuer validation is optional and silently disabled when empty | Framework |
-| F-7 | Medium | **Path-parameter injection** in `socrate.Client` (unescaped `userID` in URLs) | Framework |
-| F-8 | Medium | Unbounded body reads (JWKS, Socrate, AI gateway) — memory-exhaustion vector | Framework |
-| F-9 | Medium | `gormlogger` logs **full SQL with bound parameter values** (PII/secrets in logs) | Framework |
-| F-10 | Medium | JWKS parser accepts **weak RSA keys** (no min modulus, exponent truncated) | Framework |
-| F-17 | Medium | `apierror.Message` documented "logs only" but **serialized to clients** | Framework |
+| # | Severity | Finding | Origin | Status (v1.8.0) |
+|---|----------|---------|--------|-----------------|
+| F-1 | **High** | JWT **audience (`aud`) is never validated** — tokens are reusable across every app sharing the Socrate issuer | Framework | ✅ **Fixed** — `jwtauth.WithAudience` opt-in (#7); default-on planned for v2.0 |
+| F-2 | **High** | **Token revocation / `token_version` is never enforced** on the hot path | Framework gap | ✅ **Fixed** — `jwtauth.WithRevocationCheck` opt-in (#17) |
+| F-3 | **High** | **Tenant isolation is fail-open and absent by default** (`tenant_id` not issued by default server; `uuid.Nil` flows downstream) | Framework + Config | ✅ **Fixed** — `httpware.RequireTenant` opt-in (#15) |
+| F-4 | **High** | **Per-tenant rate limiter is a no-op in the default configuration** and fails open | Framework + Config | ◑ **Partial** — `RequireTenant` (#15) blocks nil-tenant upstream; limiter itself unchanged (in-memory, per-tenant) |
+| F-5 | Medium | Issuer validation is optional and silently disabled when empty | Framework | ◻ Open |
+| F-7 | Medium | **Path-parameter injection** in `socrate.Client` (unescaped `userID` in URLs) | Framework | ◻ Open |
+| F-8 | Medium | Unbounded body reads (JWKS, Socrate, AI gateway) — memory-exhaustion vector | Framework | ◻ Open |
+| F-9 | Medium | `gormlogger` logs **full SQL with bound parameter values** (PII/secrets in logs) | Framework | ◻ Open |
+| F-10 | Medium | JWKS parser accepts **weak RSA keys** (no min modulus, exponent truncated) | Framework | ✅ **Fixed** — min 2048-bit + exponent validation (#19) |
+| F-17 | Medium | `apierror.Message` documented "logs only" but **serialized to clients** | Framework | ◻ Open |
+| SC | Medium | Stale `golang-jwt v5.2.1` pin + Go stdlib CVEs (supply chain, see §10/§16) | Framework | ✅ **Fixed** — `golang-jwt v5.2.2` (#13), Go 1.26.4 toolchain (#11) |
 
 **Bottom line:** the pieces that exist are mostly sound; the framework is
 **incomplete relative to its own marketing** ("complete middleware stack",
@@ -454,30 +463,37 @@ Mapping each application-audit finding category to its true origin:
 
 ## 17. Phase 16 — Remediation Roadmap
 
+> **Shipped in v1.8.0 (2026-06-20):** F-1 (#7), F-2 (#17), F-3 (#15), F-10 (#19),
+> plus the supply-chain fixes — `golang-jwt v5.2.2` (#13) and the Go 1.26.4
+> toolchain clearing 11 stdlib CVEs (#11). Items below are annotated ✅/◑/◻.
+
 ### Critical (do before any multi-tenant enterprise use)
-1. **F-1** Enforce audience: add required `aud` (per-app client_id) to
-   `validateToken` — *breaking* for tokens lacking `aud`; ship behind a config flag,
-   default-on in a new major.
-2. **F-3** Add a `RequireTenant` middleware that 401s when `GetTenantID == uuid.Nil`,
-   and document that tenant-scoped repos must filter on it. *Non-breaking* (additive).
-3. **F-2** Add a revocation hook: optional `IntrospectToken` on the auth path or a
-   `token_version` validation callback. *Non-breaking* (opt-in).
+1. ✅ **F-1** Enforce audience — **shipped v1.8.0 (#7)** as the opt-in
+   `jwtauth.WithAudience(clientID)`. Default-off (non-breaking); making it
+   default/required remains a **v2.0** item.
+2. ✅ **F-3** `RequireTenant` middleware that 401s when `GetTenantID == uuid.Nil`
+   — **shipped v1.8.0 (#15)** as `httpware.RequireTenant`. Tenant-scoped repos
+   filtering on it remains application responsibility (documented).
+3. ✅ **F-2** Revocation hook — **shipped v1.8.0 (#17)** as the opt-in
+   `jwtauth.WithRevocationCheck(fn)` (token_version / denylist / introspection).
 
 ### High
-4. **F-4** Document the nil-tenant bypass; offer an IP/subject fallback key and a
-   pluggable distributed store (Redis) for multi-instance correctness.
-5. **F-5** Make `jwtauth.New` reject an empty issuer, or add `NewWithConfig` that
-   validates. *Minor breaking.*
-6. **F-17** Either redact `Message` from `WriteJSON` for 5xx, or fix the doc and add
-   a separate `PublicMessage`. *Behaviour change — version carefully.*
+4. ◑ **F-4** Partially mitigated by `RequireTenant` (#15), which rejects
+   nil-tenant requests before the limiter. **Still open:** IP/subject fallback key
+   and a pluggable distributed (Redis) store for multi-instance correctness.
+5. ◻ **F-5** Make `jwtauth.New` reject an empty issuer, or add a validating
+   constructor. *Minor breaking.* **Open.**
+6. ◻ **F-17** Redact `Message` from `WriteJSON` for 5xx, or fix the doc and add a
+   separate `PublicMessage`. *Behaviour change — version carefully.* **Open.**
 
 ### Medium
-7. **F-7** `url.PathEscape` all dynamic path segments in `socrate.Client`.
-8. **F-9** Add a redaction/disable hook to `gormlogger`; default to **not** logging
-   bound values in production.
-9. **F-8** Wrap all upstream `io.ReadAll`/JSON decodes with `io.LimitReader` /
-   `http.MaxBytesReader`.
-10. **F-10** Enforce `pub.N.BitLen() >= 2048` and exponent sanity in JWKS parsing.
+7. ◻ **F-7** `url.PathEscape` all dynamic path segments in `socrate.Client`. **Open.**
+8. ◻ **F-9** Add a redaction/disable hook to `gormlogger`; default to **not**
+   logging bound values in production. **Open.**
+9. ◻ **F-8** Wrap all upstream `io.ReadAll`/JSON decodes with `io.LimitReader` /
+   `http.MaxBytesReader`. **Open.**
+10. ✅ **F-10** Enforce `pub.N.BitLen() >= 2048` and exponent sanity in JWKS
+    parsing — **shipped v1.8.0 (#19)**. Default-on (no opt-in).
 
 ### Architecture / non-breaking
 11. Add a `Config.Validate()` that refuses insecure boot (empty issuer, missing
@@ -498,6 +514,11 @@ Mapping each application-audit finding category to its true origin:
 ---
 
 ## 18. Final Recommendation
+
+> **Update (v1.8.0):** the three Critical items below (F-1, F-2, F-3) and F-10
+> have since shipped as opt-in controls, and the supply-chain issues are cleared.
+> The recommendation text below is the original pre-remediation verdict; the
+> revised standing is in the callout immediately after it.
 
 > **Would I recommend `backendkit` as the security foundation for multiple
 > enterprise SaaS applications?**
@@ -530,6 +551,26 @@ documented shared-responsibility model that states plainly what backendkit does
 distributed rate limiting). With the Phase-16 roadmap applied — a realistic
 v1.x-then-v2.0 effort — it can become a framework I *would* recommend as an
 enterprise security foundation.
+
+### Revised standing — post v1.8.0 (2026-06-20)
+
+The v1.x half of that roadmap has now shipped. The framework **provides** every
+Critical control: audience validation (`WithAudience`, #7), revocation
+(`WithRevocationCheck`, #17), tenant enforcement (`RequireTenant`, #15), and weak
+RSA keys are now rejected by default (#19); the supply chain is clean
+(`govulncheck` passes on Go 1.26.4). The three Criticals are therefore **closable
+per service** — the controls exist; what remains is **adoption**: F-1/F-2/F-3 are
+opt-in, so each app must actually call `WithAudience`/`WithRevocationCheck` and
+mount `RequireTenant`. Making these defaults (rather than opt-in) is the remaining
+v2.0 step that would let the framework guarantee, rather than merely offer, the
+invariants.
+
+**Revised verdict:** still adopt as a **dependency**, but the qualifier has moved
+from *"the controls don't exist"* to *"the controls exist and must be switched
+on."* With audience + revocation configured and `RequireTenant` mounted on
+tenant-scoped routes — plus the still-open Mediums (F-5, F-7, F-8, F-9, F-17)
+tracked — it is a **defensible security foundation for multi-tenant SaaS today**,
+pending the v2.0 default-flips for a by-default guarantee.
 
 ### Evidence gaps (stated explicitly, no speculation)
 Conclusions I **could not** reach from this repository alone, and what is needed:

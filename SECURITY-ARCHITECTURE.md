@@ -177,27 +177,38 @@ a single missing `r.Use(...)` or a default-config token removes the only barrier
 The spine of this pass. Each invariant is what an architect *expects* the
 framework to guarantee, with VERIFIED / VIOLATED / DELEGATED status and evidence.
 
-| ID | Invariant | Status | Evidence / Finding |
-|----|-----------|--------|--------------------|
+> **Updated post v1.8.0 (2026-06-20).** Status reflects the shipped remediation
+> (#7, #15, #17, #19, #11, #13). The legend `✱ (opt-in)` marks an invariant the
+> framework now **provides a control for** but does **not** enforce by default —
+> verified once the app configures it; a by-default guarantee is the v2.0
+> default-flip. The original (pre-remediation) statuses are shown struck for
+> traceability.
+
+| ID | Invariant | Status (v1.8.0) | Evidence / Finding |
+|----|-----------|-----------------|--------------------|
 | INV-1 | No protected handler runs without a verified identity | **VERIFIED** (where mounted) | fail-closed 401 `middleware.go:106-118` |
-| INV-2 | A token is accepted only by the audience it was issued for | **VIOLATED** | no `WithAudience` `middleware.go:191-207` (F-1) |
-| INV-3 | Expired/revoked credentials are rejected | **PARTIAL** | exp ✔ default; revocation ✗ `middleware.go:163-165` (F-2) |
+| INV-2 | A token is accepted only by the audience it was issued for | ~~VIOLATED~~ → **VERIFIED ✱ (opt-in)** | `WithAudience` shipped #7 (F-1); default-off |
+| INV-3 | Expired/revoked credentials are rejected | ~~PARTIAL~~ → **VERIFIED ✱ (opt-in)** | exp ✔ default; `WithRevocationCheck` shipped #17 (F-2) |
 | INV-4 | Signature algorithm & key are attacker-uninfluenceable | **VERIFIED** | `193`, `199-201` |
 | INV-5 | Context identity derives only from verified claims; client cannot inject | **VERIFIED** | unexported keys `ctxutil.go:20-39`; written only in `middleware.go:120-169` |
-| INV-6 | Every tenant-scoped op is bound to a non-nil verified tenant | **VIOLATED** | nil-tenant flows silently `middleware.go:122-131`, `ctxutil.go:49-54` (F-3) |
+| INV-6 | Every tenant-scoped op is bound to a non-nil verified tenant | ~~VIOLATED~~ → **VERIFIED ✱ (opt-in)** | `RequireTenant` shipped #15 (F-3) |
 | INV-7 | Authorization is mandatory for protected resources | **PARTIAL** | opt-in middleware `README.md:259-265` |
-| INV-8 | Abuse controls cannot be bypassed by omitting identity | **VIOLATED** | nil-tenant pass-through `ratelimit.go:108-112` (F-4) |
-| INV-9 | Errors/panics never disclose internal state to clients | **PARTIAL** | Recover ✔ `recover.go`; `Message` serialized ✗ `errors.go:15` vs `186-190` (F-17) |
+| INV-8 | Abuse controls cannot be bypassed by omitting identity | ~~VIOLATED~~ → **PARTIAL** | `RequireTenant` (#15) blocks nil-tenant upstream; limiter still in-memory/per-tenant (F-4) |
+| INV-9 | Errors/panics never disclose internal state to clients | **PARTIAL** | Recover ✔ `recover.go`; `Message` serialized ✗ `errors.go:15` vs `186-190` (F-17, open) |
 | INV-10 | Secrets are never logged or serialized | **VERIFIED** | no secret logging; `aigateway client.go:91-95` |
-| INV-11 | Untrusted input cannot restructure outbound requests | **VIOLATED** | unescaped path params `socrate client.go:443…592` (F-7) |
-| INV-12 | Resource consumption is bounded | **PARTIAL** | BodyLimit ✔; unbounded upstream reads ✗ `middleware.go:255`, `client.go:172` (F-8) |
-| INV-13 | Cryptographic keys meet a minimum strength | **VIOLATED** | no min modulus, exp truncated `middleware.go:285-298` (F-10) |
+| INV-11 | Untrusted input cannot restructure outbound requests | **VIOLATED** | unescaped path params `socrate client.go:443…592` (F-7, open) |
+| INV-12 | Resource consumption is bounded | **PARTIAL** | BodyLimit ✔; unbounded upstream reads ✗ (F-8, open). Supply-chain CVEs cleared via Go 1.26.4 (#11) |
+| INV-13 | Cryptographic keys meet a minimum strength | ~~VIOLATED~~ → **VERIFIED** | min 2048-bit + exponent validation shipped #19 (F-10); **default-on** |
 | INV-14 | Security-relevant actions are durably, tamper-evidently recorded | **DELEGATED** | only reads Socrate logs `client.go:835`; no writer |
 
-**Score: 4 VERIFIED, 4 PARTIAL, 4 VIOLATED, 2 DELEGATED.** The four VIOLATED
-invariants (INV-2, INV-6, INV-8, INV-11) plus the revocation half of INV-3 are
-the architectural defects of record. All map to existing High/Medium findings —
-no new defects raised.
+**Score (v1.8.0): 5 VERIFIED, 3 VERIFIED✱ (opt-in), 4 PARTIAL, 1 VIOLATED,
+1 DELEGATED** — was *4 VERIFIED, 4 PARTIAL, 4 VIOLATED, 2 DELEGATED*. The three
+formerly-VIOLATED auth/tenant invariants (INV-2, INV-3, INV-6) now have shipped
+controls and are verified **when enabled**; INV-13 is verified by default; INV-8
+downgraded from violated to partial. The remaining hard gap is **INV-11**
+(socrate path-escaping, F-7); INV-7/9/12 remain partial (F-17, F-8 open). The
+v2.0 step is flipping the ✱ controls to default-on so the guarantees hold without
+per-app configuration.
 
 ---
 
@@ -217,7 +228,7 @@ GOAL: Act as a user inside App-B using a token minted for App-A
              comes from the *same* `role` claim → lateral access
 MITIGATION (today): only if App-A and App-B happen to use different issuers
                     (config-dependent, not guaranteed)
-KILL: enforce WithAudience(appClientID)
+KILL: enforce WithAudience(appClientID)        ✅ shipped v1.8.0 (#7, opt-in)
 ```
 
 ### F-2 / INV-3 — Use of a logically-revoked token (HIGH)
@@ -230,7 +241,7 @@ GOAL: Keep access after logout / password change / admin revoke
        ├─ no introspection on hot path (IntrospectToken exists, unused, client.go:741)
        └─ no revocation list / no token binding
           └─ RESULT: token valid until exp regardless of server-side revoke
-KILL: token_version callback OR introspect-on-sensitive-route
+KILL: token_version callback OR introspect-on-sensitive-route  ✅ shipped v1.8.0 (#17, WithRevocationCheck)
 ```
 
 ### F-3 / INV-6 — Cross-tenant access via absent tenant (HIGH)
@@ -244,7 +255,7 @@ GOAL: Read/write across tenant boundaries
    └─ Overwrite path
        └─ any in-binary code calls WithTenantID again (exported, ctxutil.go:44)
           → no write-once invariant
-KILL: RequireTenant middleware (401 on uuid.Nil) + write-once tenant
+KILL: RequireTenant middleware (401 on uuid.Nil) + write-once tenant  ✅ RequireTenant shipped v1.8.0 (#15); write-once = v2.0
 ```
 
 ### F-4 / INV-8 — Rate-limit / abuse-control bypass (HIGH)
@@ -259,7 +270,7 @@ GOAL: Flood the service / brute force without throttling
    │      → effective limit = N_instances × rps
    └─ Tenant-internal DoS
        └─ one user exhausts the shared per-tenant bucket (getLimiter keyed on tenant only)
-KILL: fallback key (subject/IP) + distributed store (Redis) + per-subject buckets
+KILL: fallback key (subject/IP) + distributed store (Redis) + per-subject buckets  ◑ partially mitigated by RequireTenant (#15); limiter changes still open
 ```
 
 ---
@@ -459,28 +470,31 @@ Sequenced to convert VIOLATED/PARTIAL invariants to VERIFIED with least churn:
 
 ## 14. Security Maturity Score
 
-Scale 0–5 (0 ad-hoc · 3 defined/repeatable · 5 optimised):
+Scale 0–5 (0 ad-hoc · 3 defined/repeatable · 5 optimised). Levels below are
+**post v1.8.0**; the pre-remediation level is shown in parentheses.
 
-| Dimension | Level | Basis |
+| Dimension | Level (v1.8.0) | Basis |
 |-----------|:-----:|-------|
-| Secure design | **3** | Clear boundaries, fail-closed gates, minimal crypto |
-| AuthN/AuthZ completeness | **2** | aud/revocation/object-level/mandatory-authz gaps |
-| Invariant enforcement | **2** | 4/14 violated, 4 partial (§6) |
-| Crypto architecture | **3** | Delegated + pinned; weak anchor validation |
-| Supply-chain assurance | **2** | Pinned + tidy CI, but no SCA, stale auth dep |
-| Verification/testing | **2** | Thin negative-path auth tests |
-| Observability/audit | **2** | Good correlation, no native audit, log leakage |
-| Process (CI/lint/deprecation) | **4** | race+vet+lint, SemVer discipline |
-| **Overall maturity** | **2.5 / 5** | "Defined but incomplete" |
+| Secure design | **4** (was 3) | Controls now provided for every Critical; fail-closed gates; minimal crypto |
+| AuthN/AuthZ completeness | **3** (was 2) | aud + revocation shipped (#7/#17); object-level & mandatory-authz still gaps |
+| Invariant enforcement | **3** (was 2) | 1 violated, 4 partial, 3 verified✱(opt-in), rest verified (§6) |
+| Crypto architecture | **4** (was 3) | Delegated + pinned; **min key size now enforced** (#19) |
+| Supply-chain assurance | **3** (was 2) | `govulncheck` clean on Go 1.26.4, deps current (#11/#13); still **no SCA job in CI** |
+| Verification/testing | **3** (was 2) | Added negative tests for audience/revocation/key-size; `alg=none` still missing |
+| Observability/audit | **2** (—) | Good correlation; no native audit writer; SQL-value log leakage (F-9) open |
+| Process (CI/lint/deprecation) | **4** (—) | race+vet+lint, SemVer + changelog discipline, shipped v1.8.0 cleanly |
+| **Overall maturity** | **≈3.3 / 5** (was 2.5) | "Defined and security-hardened; default-on guarantees pending v2.0" |
 
 ## 15. Enterprise Readiness Score
 
+Post v1.8.0 (pre-remediation score in parentheses):
+
 | Use as… | Score /10 | Rationale |
 |---------|:---------:|-----------|
-| Trusted **dependency / component** (app supplies compensating controls) | **7** | Components are sound; gaps are documentable & coverable app-side |
-| **Sole** security foundation, single-tenant SaaS | **6** | Workable after F-5/F-17; accept in-memory rate limit |
-| **Sole** security foundation, **multi-tenant enterprise** | **4** | INV-2 + INV-6 + INV-8 violations are disqualifying as-is |
-| Regulated (HIPAA/PCI/Gov) | **3** | Revocation, audit durability, key-strength, log minimisation all required & unmet |
+| Trusted **dependency / component** (app supplies compensating controls) | **8** (was 7) | Controls now present in-framework; gaps documented & coverable app-side |
+| **Sole** security foundation, single-tenant SaaS | **7** (was 6) | Workable; F-5/F-17 remain; in-memory rate limit accepted |
+| **Sole** security foundation, **multi-tenant enterprise** | **6** (was 4) | INV-2/3/6 controls **exist** but are opt-in (must be enabled); F-7/F-9 open |
+| Regulated (HIPAA/PCI/Gov) | **4** (was 3) | Revocation + key-strength now addressed; audit durability & log minimisation (F-9) still unmet |
 
 ---
 
@@ -521,6 +535,29 @@ this becomes a framework I *would* endorse as an enterprise security foundation.
 **Recommendation: APPROVE AS A DEPENDENCY behind a shared-responsibility doc;
 WITHHOLD as a sole multi-tenant enterprise security foundation until INV-2,
 INV-3, INV-6, and INV-8 are enforced.**
+
+### Revised standing — post v1.8.0 (2026-06-20)
+
+The "additive v1.x work" anticipated above **has shipped.** The framework now
+provides every previously-violated control: audience binding (`WithAudience`, #7),
+revocation (`WithRevocationCheck`, #17), tenant enforcement (`RequireTenant`, #15),
+and weak-key rejection is **default-on** (#19, INV-13 → VERIFIED). INV-8 drops
+from violated to partial (RequireTenant blocks the nil-tenant bypass upstream).
+The supply-chain note is closed: `govulncheck` passes on the Go 1.26.4 toolchain
+with `golang-jwt v5.2.2` (#11/#13). The attack trees in §7 no longer succeed
+against a *correctly configured* deployment — their "KILL" lines are now shipped
+code.
+
+The one structural caveat that remains: INV-2/INV-3/INV-6 are **opt-in** (the
+`✱` in §6), so the guarantee holds only when each app enables them. The remaining
+v2.0 step is the default-flip (audience required, tenant write-once) plus the
+open Mediums (F-7 socrate path-escaping — the last VIOLATED invariant INV-11; F-8,
+F-9, F-17) and a `govulncheck` CI job.
+
+**Revised recommendation: APPROVE AS A DEPENDENCY, and APPROVE as a multi-tenant
+enterprise security foundation *for any service that enables the shipped controls*
+(`WithAudience` + `WithRevocationCheck` + `RequireTenant`). Full by-default
+endorsement awaits the v2.0 default-flips and closing F-7/F-9.**
 
 ### Verification limits (no speculation)
 The following are **delegated trust** and cannot be verified from this repo —
