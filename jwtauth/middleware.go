@@ -14,6 +14,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"strings"
@@ -323,7 +324,7 @@ func (m *Middleware) fetchJWKS() error {
 	}
 
 	var jwks jwksResponse
-	if err := json.NewDecoder(resp.Body).Decode(&jwks); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxJWKSBytes)).Decode(&jwks); err != nil {
 		return fmt.Errorf("decode JWKS: %w", err)
 	}
 
@@ -353,6 +354,10 @@ func (m *Middleware) fetchJWKS() error {
 }
 
 const (
+	// maxJWKSBytes caps how much of a JWKS response is read into memory. JWKS
+	// documents are small; this guards against an oversized/hostile endpoint.
+	maxJWKSBytes = 1 << 20 // 1 MiB
+
 	// minRSAKeyBits is the smallest RSA modulus accepted from a JWKS endpoint.
 	// Keys below this are rejected as insufficiently strong (INV-13).
 	minRSAKeyBits = 2048
