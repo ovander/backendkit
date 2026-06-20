@@ -8,6 +8,14 @@ All notable changes to backendkit are documented here. The format is based on
 
 ### Security
 
+- **jwtauth: enforce a minimum RSA key size (2048 bits) for JWKS keys.**
+  `parseRSAPublicKey` now rejects moduli below 2048 bits and validates the public
+  exponent (odd, > 1, within `int` range) instead of silently truncating it, so a
+  JWKS serving an undersized or malformed key is no longer trusted. Backward
+  compatible for real deployments (Socrate/RS256 use ≥2048-bit keys). Addresses
+  **F-10 / INV-13** (`SECURITY-AUDIT.md`, `SECURITY-ARCHITECTURE.md`).
+  ([#18](https://github.com/ovander/backendkit/issues/18))
+
 - **deps: bump `golang-jwt/jwt/v5` `v5.2.1` → `v5.2.2`.** Clears GO-2025-3553
   (excessive memory allocation during JWT header parsing) in backendkit's
   authentication trust-root dependency. The advisory is not on a called path

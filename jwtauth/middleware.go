@@ -352,6 +352,16 @@ func (m *Middleware) fetchJWKS() error {
 	return nil
 }
 
+const (
+	// minRSAKeyBits is the smallest RSA modulus accepted from a JWKS endpoint.
+	// Keys below this are rejected as insufficiently strong (INV-13).
+	minRSAKeyBits = 2048
+	// maxRSAExponent bounds the public exponent to a sane range — far above the
+	// conventional 65537 — so malformed/oversized exponents are rejected rather
+	// than silently truncated.
+	maxRSAExponent = 1 << 31
+)
+
 func parseRSAPublicKey(nStr, eStr string) (*rsa.PublicKey, error) {
 	nBytes, err := base64.RawURLEncoding.DecodeString(nStr)
 	if err != nil {
@@ -361,8 +371,22 @@ func parseRSAPublicKey(nStr, eStr string) (*rsa.PublicKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decode exponent: %w", err)
 	}
-	return &rsa.PublicKey{
-		N: new(big.Int).SetBytes(nBytes),
-		E: int(new(big.Int).SetBytes(eBytes).Int64()),
-	}, nil
+
+	n := new(big.Int).SetBytes(nBytes)
+	if n.BitLen() < minRSAKeyBits {
+		return nil, fmt.Errorf("RSA modulus too small: %d bits (minimum %d)", n.BitLen(), minRSAKeyBits)
+	}
+
+	// The public exponent must be an odd integer > 1 that fits in an int.
+	// Reject (rather than silently truncate via Int64) anything outside that range.
+	eBig := new(big.Int).SetBytes(eBytes)
+	if !eBig.IsInt64() {
+		return nil, fmt.Errorf("RSA public exponent too large")
+	}
+	e := eBig.Int64()
+	if e < 3 || e > maxRSAExponent || e&1 == 0 {
+		return nil, fmt.Errorf("invalid RSA public exponent: %d", e)
+	}
+
+	return &rsa.PublicKey{N: n, E: int(e)}, nil
 }
