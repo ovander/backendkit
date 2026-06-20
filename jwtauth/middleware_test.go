@@ -317,3 +317,22 @@ func TestHandler_NoRevocationCheck_AllowsToken(t *testing.T) {
 		t.Errorf("expected 200 when revocation checking is disabled, got %d", code)
 	}
 }
+
+// ─── Minimum RSA key size (F-10 / INV-13) ───────────────────────────────────
+
+func TestHandler_RejectsUndersizedRSAKey(t *testing.T) {
+	// 1024-bit key: below the 2048-bit minimum. Its JWKS entry must be discarded,
+	// leaving no usable signing key, so a token signed with it is rejected.
+	weak, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatalf("generate 1024-bit key: %v", err)
+	}
+	srv := jwksServer(t, "k1", weak)
+	defer srv.Close()
+
+	m := jwtauth.New(srv.URL, "", testLogger())
+
+	if code := serveWithToken(t, m, weak, claimsWithVersion("42", 0)); code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for a token signed with a 1024-bit key, got %d", code)
+	}
+}
