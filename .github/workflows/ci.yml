@@ -48,3 +48,8 @@ jobs:
       - uses: golangci/golangci-lint-action@v7
         with:
           version: v2.5.0
+          # Skip the action's `config verify` step: it fetches a JSON schema from
+          # golangci-lint.run at runtime, which makes CI fail on transient network
+          # timeouts unrelated to the code. Local `golangci-lint run` still
+          # validates the config.
+          verify: false
