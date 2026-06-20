@@ -440,7 +440,7 @@ func (c *Client) GetUser(ctx context.Context, userID string) (*User, error) {
 		return nil, fmt.Errorf("resolve app ID: %w", err)
 	}
 	resp, err := c.doWithJWT(ctx, http.MethodGet,
-		c.adminURL(fmt.Sprintf("/api/apps/%s/users/%s", appID, userID)), nil)
+		c.adminURL(fmt.Sprintf("/api/apps/%s/users/%s", appID, url.PathEscape(userID))), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -500,7 +500,7 @@ func (c *Client) UpdateUserRole(ctx context.Context, userID, role string) error 
 	}
 	body := map[string]string{"role": role}
 	resp, err := c.doWithJWT(ctx, http.MethodPut,
-		c.adminURL(fmt.Sprintf("/api/apps/%s/users/%s", appID, userID)), body)
+		c.adminURL(fmt.Sprintf("/api/apps/%s/users/%s", appID, url.PathEscape(userID))), body)
 	if err != nil {
 		return err
 	}
@@ -521,7 +521,7 @@ func (c *Client) DeleteUser(ctx context.Context, userID string) error {
 		return fmt.Errorf("resolve app ID: %w", err)
 	}
 	resp, err := c.doWithJWT(ctx, http.MethodDelete,
-		c.adminURL(fmt.Sprintf("/api/apps/%s/users/%s", appID, userID)), nil)
+		c.adminURL(fmt.Sprintf("/api/apps/%s/users/%s", appID, url.PathEscape(userID))), nil)
 	if err != nil {
 		return err
 	}
@@ -542,7 +542,7 @@ func (c *Client) ResendVerification(ctx context.Context, userID string) error {
 		return fmt.Errorf("resolve app ID: %w", err)
 	}
 	resp, err := c.doWithJWT(ctx, http.MethodPost,
-		c.adminURL(fmt.Sprintf("/api/apps/%s/users/%s/resend-verification", appID, userID)), nil)
+		c.adminURL(fmt.Sprintf("/api/apps/%s/users/%s/resend-verification", appID, url.PathEscape(userID))), nil)
 	if err != nil {
 		return err
 	}
@@ -563,7 +563,7 @@ func (c *Client) ForcePasswordReset(ctx context.Context, userID string) error {
 		return fmt.Errorf("resolve app ID: %w", err)
 	}
 	resp, err := c.doWithJWT(ctx, http.MethodPost,
-		c.adminURL(fmt.Sprintf("/api/apps/%s/users/%s/reset-password", appID, userID)), nil)
+		c.adminURL(fmt.Sprintf("/api/apps/%s/users/%s/reset-password", appID, url.PathEscape(userID))), nil)
 	if err != nil {
 		return err
 	}
@@ -589,7 +589,7 @@ func (c *Client) GetUserAsService(ctx context.Context, userID string) (*User, er
 		return nil, fmt.Errorf("resolve app ID: %w", err)
 	}
 	resp, err := c.doWithServiceToken(ctx, http.MethodGet,
-		c.adminURL(fmt.Sprintf("/api/apps/%s/users/%s", appID, userID)), nil)
+		c.adminURL(fmt.Sprintf("/api/apps/%s/users/%s", appID, url.PathEscape(userID))), nil)
 	if err != nil {
 		return nil, err
 	}

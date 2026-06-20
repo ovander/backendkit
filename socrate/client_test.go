@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/ovander/backendkit/ctxutil"
@@ -94,6 +95,32 @@ func TestGetUser_NotFound(t *testing.T) {
 	}
 	if u != nil {
 		t.Errorf("expected nil user, got: %+v", u)
+	}
+}
+
+// TestGetUser_EscapesUserIDInPath verifies that a userID containing path
+// metacharacters is percent-encoded rather than rewriting the request route (F-7).
+func TestGetUser_EscapesUserIDInPath(t *testing.T) {
+	var gotURI string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		gotURI = r.RequestURI
+		w.WriteHeader(http.StatusNotFound) // GetUser maps 404 to (nil, nil)
+	})
+	srv, close := newTestServer(mux)
+	defer close()
+
+	c, _ := socrate.NewClient(socrate.ClientConfig{BaseURL: srv.URL, AdminBaseURL: srv.URL, ClientID: "cid", AppID: "1"})
+	ctx := socrate.WithJWT(context.Background(), "tok")
+
+	if _, err := c.GetUser(ctx, "1/reset-password"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(gotURI, "1%2Freset-password") {
+		t.Errorf("userID not path-escaped; request URI = %q", gotURI)
+	}
+	if strings.Contains(gotURI, "users/1/reset-password") {
+		t.Errorf("path-segment injection not prevented; request URI = %q", gotURI)
 	}
 }
 
