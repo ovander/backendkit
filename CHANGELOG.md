@@ -8,6 +8,12 @@ All notable changes to backendkit are documented here. The format is based on
 
 ### Security
 
+- **deps: bump `golang-jwt/jwt/v5` `v5.2.1` → `v5.2.2`.** Clears GO-2025-3553
+  (excessive memory allocation during JWT header parsing) in backendkit's
+  authentication trust-root dependency. The advisory is not on a called path
+  (`govulncheck` already exited 0), so this is defense-in-depth; v5.2.2 is an
+  API-compatible security patch, no source changes. ([#12](https://github.com/ovander/backendkit/issues/12))
+
 - **Build with a patched Go toolchain (`go1.26.4`).** Added a `toolchain go1.26.4`
   directive to `go.mod` and bumped CI to Go 1.26.4, clearing 11 Go standard-library
   vulnerabilities reported by `govulncheck` (GO-2026-4599 … GO-2026-5039 in
