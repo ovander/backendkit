@@ -6,6 +6,16 @@ All notable changes to backendkit are documented here. The format is based on
 
 ## [Unreleased]
 
+### Security
+
+- **socrate: path-escape `userID` in request URLs.** `socrate.Client` now wraps the
+  caller-supplied `userID` in `url.PathEscape` at every endpoint that interpolates
+  it (`GetUser`, `UpdateUserRole`, `DeleteUser`, `ResendVerification`,
+  `ForcePasswordReset`, `GetUserAsService`), so an ID containing `/`, `?`, `#`, or
+  `..` can no longer rewrite the target route. Addresses **F-7 / INV-11**
+  (`SECURITY-AUDIT.md`, `SECURITY-ARCHITECTURE.md`).
+  ([#22](https://github.com/ovander/backendkit/issues/22))
+
 ## [1.8.0] - 2026-06-20
 
 ### Security
