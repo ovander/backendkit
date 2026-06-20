@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/ovander/backendkit/apierror"
@@ -62,6 +63,49 @@ func TestWriteJSON(t *testing.T) {
 	}
 	if body.Error.Code != "not_found" {
 		t.Errorf("body.error.code = %q, want not_found", body.Error.Code)
+	}
+}
+
+func TestWriteJSON_RedactsServerErrors(t *testing.T) {
+	w := httptest.NewRecorder()
+	apierror.Internal("db dsn: postgres://user:p4ssw0rd@host/db").
+		WithDetails(map[string]string{"stack": "internal trace"}).
+		WriteJSON(w)
+
+	body := w.Body.String()
+	if strings.Contains(body, "postgres://user:p4ssw0rd") {
+		t.Errorf("server-error response leaked internal Message: %s", body)
+	}
+	if strings.Contains(body, "internal trace") {
+		t.Errorf("server-error response leaked Details: %s", body)
+	}
+
+	var parsed struct {
+		Error apierror.AppError `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if parsed.Error.Code != "internal_error" {
+		t.Errorf("code = %q, want internal_error", parsed.Error.Code)
+	}
+	if parsed.Error.Message != "Internal Server Error" {
+		t.Errorf("message = %q, want generic status text", parsed.Error.Message)
+	}
+}
+
+func TestWriteJSON_PreservesClientErrorMessage(t *testing.T) {
+	w := httptest.NewRecorder()
+	apierror.BadRequest("invalid store ID").WriteJSON(w)
+
+	var parsed struct {
+		Error apierror.AppError `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if parsed.Error.Message != "invalid store ID" {
+		t.Errorf("4xx message = %q, want it preserved", parsed.Error.Message)
 	}
 }
 

@@ -8,6 +8,16 @@ All notable changes to backendkit are documented here. The format is based on
 
 ### Security
 
+- **apierror: redact internal message/details on 5xx responses.** `WriteJSON` now
+  replaces the dev-facing `Message` with a generic status text and drops `Details`
+  for any 5xx response, so internal detail (e.g. `apierror.Internal(err.Error())`)
+  can no longer leak to clients. **4xx responses are unchanged.** The full error
+  is still available server-side via `Error()` for logging; the struct doc was
+  corrected. Addresses **F-17 / INV-9** (`SECURITY-AUDIT.md`,
+  `SECURITY-ARCHITECTURE.md`).
+  **Behaviour change:** 5xx response bodies no longer echo the supplied message.
+  ([#28](https://github.com/ovander/backendkit/issues/28))
+
 - **gormlogger: opt-in SQL redaction.** New `gormlogger.WithSQLRedaction()` option
   omits the SQL statement from log records (logs `sql: "[redacted]"`, keeping
   timing/row-count/caller). GORM hands the logger SQL with bound parameter values
