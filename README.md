@@ -44,7 +44,10 @@ backendkit packages that foundation into a single, versioned dependency so every
 
 ## Requirements
 
-- **Go 1.25** or later
+- **Go 1.25** or later to import the module. For building/releasing backendkit
+  itself, use **Go 1.26.4 or later** (pinned via the `toolchain` directive in
+  `go.mod`) so the binary picks up the latest Go standard-library security fixes;
+  run `govulncheck ./...` to verify.
 - **Socrate** — backendkit is not a generic OAuth2 toolkit. It is designed specifically for services that use Socrate as their identity provider. Without a running Socrate instance, `jwtauth`, `socrate`, and `ctxutil` will not function correctly.
 - A PostgreSQL database is required if you use `tiering.PolicyService` for persistent feature policies.
 
