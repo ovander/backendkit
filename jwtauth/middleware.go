@@ -78,6 +78,7 @@ type jwksResponse struct {
 type Middleware struct {
 	jwksURL    string
 	issuer     string
+	audience   string
 	logger     *logrus.Entry
 	httpClient *http.Client
 	cacheTTL   time.Duration
@@ -87,10 +88,29 @@ type Middleware struct {
 	lastFetch time.Time
 }
 
+// Option configures optional Middleware behaviour. Pass options to New.
+type Option func(*Middleware)
+
+// WithAudience enables JWT audience ("aud") validation. When set, a token is
+// accepted only if its aud claim contains expectedAudience — typically this
+// service's OAuth client_id. This prevents a token minted for one app from
+// being replayed against another app that shares the same issuer and JWKS.
+//
+// Audience validation is opt-in for backward compatibility: when WithAudience is
+// not supplied the aud claim is not checked. New services should set it. A token
+// that lacks an aud claim is rejected when an expected audience is configured.
+func WithAudience(expectedAudience string) Option {
+	return func(m *Middleware) { m.audience = expectedAudience }
+}
+
 // New creates a Middleware that validates tokens against the JWKS at jwksURL.
 // issuer is optional; when non-empty it is enforced via jwt.WithIssuer.
-func New(jwksURL, issuer string, logger *logrus.Entry) *Middleware {
-	return &Middleware{
+//
+// Optional behaviour (e.g. audience validation) is configured via opts; see
+// WithAudience. Passing no options preserves the historical behaviour, so
+// existing three-argument calls continue to compile and behave unchanged.
+func New(jwksURL, issuer string, logger *logrus.Entry, opts ...Option) *Middleware {
+	m := &Middleware{
 		jwksURL:    jwksURL,
 		issuer:     issuer,
 		logger:     logger,
@@ -98,6 +118,10 @@ func New(jwksURL, issuer string, logger *logrus.Entry) *Middleware {
 		keys:       make(map[string]*rsa.PublicKey),
 		cacheTTL:   1 * time.Hour,
 	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
 }
 
 // Handler is the chi-compatible middleware function.
@@ -193,6 +217,9 @@ func (m *Middleware) validateToken(tokenString string) (*SocrateClaims, error) {
 	opts := []jwt.ParserOption{jwt.WithValidMethods([]string{"RS256"})}
 	if m.issuer != "" {
 		opts = append(opts, jwt.WithIssuer(m.issuer))
+	}
+	if m.audience != "" {
+		opts = append(opts, jwt.WithAudience(m.audience))
 	}
 
 	tok, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
