@@ -8,6 +8,13 @@ All notable changes to backendkit are documented here. The format is based on
 
 ### Security
 
+- **jwtauth: warn when issuer validation is disabled.** `jwtauth.New` now logs a
+  warning at construction when the issuer is empty, so a service running without
+  `iss` enforcement is visible at startup instead of silently fail-open. No change
+  to token validation; making issuer mandatory remains a v2.0 default-flip.
+  Addresses **F-5** (`SECURITY-AUDIT.md`).
+  ([#30](https://github.com/ovander/backendkit/issues/30))
+
 - **apierror: redact internal message/details on 5xx responses.** `WriteJSON` now
   replaces the dev-facing `Message` with a generic status text and drops `Details`
   for any 5xx response, so internal detail (e.g. `apierror.Internal(err.Error())`)
