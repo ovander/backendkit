@@ -164,3 +164,90 @@ func TestHandler_TamperedToken_Returns401(t *testing.T) {
 		t.Errorf("expected 401, got %d", w.Code)
 	}
 }
+
+// ─── Audience validation (F-1 / INV-2) ──────────────────────────────────────
+
+// okHandler is a 200 handler used to assert that a request was allowed through.
+func okHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+}
+
+// serveWithToken signs claims, drives one request through m, and returns the
+// recorded status code.
+func serveWithToken(t *testing.T, m *jwtauth.Middleware, key *rsa.PrivateKey, claims jwtauth.SocrateClaims) int {
+	t.Helper()
+	token := signToken(t, key, "k1", claims)
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	m.Handler(okHandler()).ServeHTTP(w, r)
+	return w.Code
+}
+
+func claimsWithAudience(aud ...string) jwtauth.SocrateClaims {
+	rc := jwt.RegisteredClaims{
+		Subject:   "42",
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}
+	if len(aud) > 0 {
+		rc.Audience = jwt.ClaimStrings(aud)
+	}
+	return jwtauth.SocrateClaims{RegisteredClaims: rc}
+}
+
+func TestHandler_CorrectAudience_Allowed(t *testing.T) {
+	key := generateTestKey(t)
+	srv := jwksServer(t, "k1", key)
+	defer srv.Close()
+
+	m := jwtauth.New(srv.URL, "", testLogger(), jwtauth.WithAudience("app-123"))
+
+	if code := serveWithToken(t, m, key, claimsWithAudience("app-123")); code != http.StatusOK {
+		t.Errorf("expected 200 for matching audience, got %d", code)
+	}
+}
+
+func TestHandler_WrongAudience_Returns401(t *testing.T) {
+	key := generateTestKey(t)
+	srv := jwksServer(t, "k1", key)
+	defer srv.Close()
+
+	m := jwtauth.New(srv.URL, "", testLogger(), jwtauth.WithAudience("app-123"))
+
+	if code := serveWithToken(t, m, key, claimsWithAudience("other-app")); code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for mismatched audience, got %d", code)
+	}
+}
+
+func TestHandler_MissingAudienceWhenRequired_Returns401(t *testing.T) {
+	key := generateTestKey(t)
+	srv := jwksServer(t, "k1", key)
+	defer srv.Close()
+
+	m := jwtauth.New(srv.URL, "", testLogger(), jwtauth.WithAudience("app-123"))
+
+	// Token carries no aud claim; with an expected audience configured it must be rejected.
+	if code := serveWithToken(t, m, key, claimsWithAudience()); code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for missing audience, got %d", code)
+	}
+}
+
+// TestHandler_NoAudienceConfigured_IgnoresAud is the backward-compatibility
+// regression test: when WithAudience is not supplied, the aud claim is not
+// checked and a token with any (or no) audience is accepted.
+func TestHandler_NoAudienceConfigured_IgnoresAud(t *testing.T) {
+	key := generateTestKey(t)
+	srv := jwksServer(t, "k1", key)
+	defer srv.Close()
+
+	m := jwtauth.New(srv.URL, "", testLogger()) // no WithAudience
+
+	if code := serveWithToken(t, m, key, claimsWithAudience("some-unrelated-app")); code != http.StatusOK {
+		t.Errorf("expected 200 when audience validation is disabled, got %d", code)
+	}
+	if code := serveWithToken(t, m, key, claimsWithAudience()); code != http.StatusOK {
+		t.Errorf("expected 200 for no-aud token when validation disabled, got %d", code)
+	}
+}

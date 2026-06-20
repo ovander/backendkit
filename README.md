@@ -505,6 +505,22 @@ tenantID := ctxutil.GetTenantID(r.Context()) // uuid.Nil if the token carried no
 plan     := ctxutil.GetUserPlan(r.Context()) // "freemium" when absent
 ```
 
+**Audience validation (recommended).** When several services share one Socrate
+issuer and JWKS, a token minted for one app is otherwise cryptographically valid
+at another. Pass `jwtauth.WithAudience(clientID)` so a token is accepted only when
+its `aud` claim contains this service's client ID:
+
+```go
+auth := jwtauth.New(
+    jwksURL, issuer, logger,
+    jwtauth.WithAudience("my-app-client-id"), // reject tokens minted for other apps
+)
+```
+
+Audience validation is opt-in for backward compatibility: when `WithAudience` is
+omitted the `aud` claim is not checked. New services should set it. A token that
+lacks an `aud` claim is rejected once an expected audience is configured.
+
 ---
 
 ### tiering
