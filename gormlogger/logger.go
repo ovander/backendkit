@@ -29,25 +29,49 @@ import (
 // Recommended settings:
 //
 //	dev:        level=Info,  slowThreshold=200ms, ignoreNotFound=true
-//	production: level=Warn,  slowThreshold=500ms, ignoreNotFound=true
+//	production: level=Warn,  slowThreshold=500ms, ignoreNotFound=true, WithSQLRedaction()
+//
+// In production add WithSQLRedaction() so interpolated SQL values (which may
+// contain PII or secrets) are kept out of logs.
 type GormLogger struct {
 	entry          *logrus.Entry
 	level          glogger.LogLevel
 	slowThreshold  time.Duration
 	ignoreNotFound bool
+	redactSQL      bool
+}
+
+// Option configures optional GormLogger behaviour. Pass options to New.
+type Option func(*GormLogger)
+
+// WithSQLRedaction omits the SQL statement from log records — logging
+// `sql: "[redacted]"` alongside the usual timing, row count, and caller. GORM
+// hands the logger SQL with bound parameter values already interpolated, which
+// can contain PII or secrets; enable this in production so those values are never
+// written to logs.
+func WithSQLRedaction() Option {
+	return func(l *GormLogger) { l.redactSQL = true }
 }
 
 // New returns a glogger.Interface backed by the given logrus Entry.
 //   - level: minimum level at which to emit log records (Silent/Error/Warn/Info)
 //   - slowThreshold: queries slower than this are logged at Warn; set 0 to disable
 //   - ignoreNotFound: when true, ErrRecordNotFound produces a Debug line instead of Error
-func New(entry *logrus.Entry, level glogger.LogLevel, slowThreshold time.Duration, ignoreNotFound bool) glogger.Interface {
-	return &GormLogger{
+//
+// Optional behaviour (e.g. SQL redaction) is configured via opts; see
+// WithSQLRedaction. Passing no options preserves the historical behaviour, so
+// existing four-argument calls continue to compile and behave unchanged.
+func New(entry *logrus.Entry, level glogger.LogLevel, slowThreshold time.Duration, ignoreNotFound bool, opts ...Option) glogger.Interface {
+	l := &GormLogger{
 		entry:          entry,
 		level:          level,
 		slowThreshold:  slowThreshold,
 		ignoreNotFound: ignoreNotFound,
 	}
+	for _, opt := range opts {
+		opt(l)
+	}
+	return l
 }
 
 // LogMode returns a copy of the logger configured at the given level.
@@ -86,6 +110,9 @@ func (l *GormLogger) Trace(ctx context.Context, begin time.Time, fc func() (stri
 
 	elapsed := time.Since(begin)
 	sql, rows := fc()
+	if l.redactSQL {
+		sql = "[redacted]"
+	}
 
 	fields := logrus.Fields{
 		"elapsed_ms": elapsed.Milliseconds(),
