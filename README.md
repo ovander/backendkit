@@ -136,7 +136,7 @@ func main() {
 |---------|---------|
 | [`apierror`](#apierror) | Structured HTTP error types (`AppError`, constructor functions) |
 | [`ctxutil`](#ctxutil) | Typed context keys for Socrate claims (tenant, user, role, plan, logger, request-id) |
-| [`httpware`](#httpware) | Chi-compatible middlewares: RequestID, Logger, SecurityHeaders, BodyLimit, Recover, Timeout, RateLimiter, RBAC |
+| [`httpware`](#httpware) | Chi-compatible middlewares: RequestID, Logger, SecurityHeaders, BodyLimit, Recover, Timeout, RateLimiter, RequireTenant, RBAC |
 | [`gormlogger`](#gormlogger) | GORM → logrus bridge with slow-query detection |
 | [`jwtauth`](#jwtauth) | JWT RS256 validation middleware with JWKS cache and stale-key fallback |
 | [`socrate`](#socrate) | Full Socrate API client: user CRUD, service-account token, magic links, invite, app & superadmin management, security monitoring, dashboard, audit logs, token introspection/revocation |
@@ -156,6 +156,7 @@ Every package is independent — `go get` pulls the whole module, but importing 
 | Read the tenant / user / role / plan of the current request | [`ctxutil`](#ctxutil) |
 | Add request IDs, structured logging, panic recovery, timeouts, body limits, security headers | [`httpware`](#httpware) |
 | Rate-limit per tenant | [`httpware.RateLimiter`](#httpware) |
+| Guarantee a tenant on tenant-scoped routes | [`httpware.RequireTenant`](#httpware) |
 | Gate routes by role/permission | [`httpware.RBAC`](#httpware) |
 | Gate routes or features by commercial plan | [`tiering`](#tiering) |
 | Return consistent JSON errors | [`apierror`](#apierror) |
@@ -353,6 +354,7 @@ All middleware functions follow the standard `func(http.Handler) http.Handler` s
 | Panic recovery | `httpware.Recover(entry)` — takes a `*logrus.Entry` |
 | Per-route timeout | `httpware.Timeout(d)` |
 | Per-tenant rate limit | `httpware.NewRateLimiter(rps, burst)` |
+| Require a tenant | `httpware.RequireTenant` — 401 when no tenant is in context |
 | Role-based access | `httpware.NewRBAC(roleMap, entry)` |
 
 > Note the logger types differ: `Logger` takes the base `*logrus.Logger` (it derives a request-scoped `*logrus.Entry` per request), while `Recover` and `NewRBAC` take a pre-enriched `*logrus.Entry`.

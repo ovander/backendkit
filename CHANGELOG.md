@@ -26,6 +26,15 @@ All notable changes to backendkit are documented here. The format is based on
 
 ### Added
 
+- **httpware: `RequireTenant` middleware.** A plain
+  `func(http.Handler) http.Handler` that rejects requests with no tenant ID in
+  context (`ctxutil.GetTenantID == uuid.Nil`) with 401 Unauthorized, so
+  tenant-scoped handlers can never run against the nil tenant. Opt-in; mount it
+  after the auth middleware on tenant-scoped route groups. Rejections are logged
+  through the request-scoped logger. Addresses **F-3 / INV-6**
+  (`SECURITY-AUDIT.md`, `SECURITY-ARCHITECTURE.md`).
+  ([#14](https://github.com/ovander/backendkit/issues/14))
+
 - **jwtauth: opt-in JWT audience (`aud`) validation.** New `jwtauth.Option`
   functional-option type and `jwtauth.WithAudience(expectedAudience string)`.
   When supplied, a token is accepted only if its `aud` claim contains the
