@@ -9,6 +9,15 @@ bugs, **not** style. One question only:
 > made *today* become tomorrow's technical debt — and how do we maximise the
 > framework's **architectural half-life**?
 
+> **Status note (post v1.8.0, 2026-06-20).** None of the load-bearing decisions in
+> this review (D1 single module, D2 personal import path, D3 logrus-in-API, D4
+> HTTP-only transport, D5 flat identity, D6 unversioned error envelope, …) have
+> changed — they remain the long-term debt to address in v2.0. v1.8.0 shipped
+> security hardening only. Two small data points relevant here: the build now pins
+> the Go 1.26.4 `toolchain` (touches D1's dependency-closure surface), and the
+> project demonstrated clean SemVer + changelog release discipline cutting v1.8.0
+> (the D-governance trait this review flagged as durable).
+
 The governing law of this review is **Hyrum's Law**: at thousands of services,
 every observable behaviour — every import path, every JSON field, every
 zero-value fallback, every transitive dependency version — becomes a contract

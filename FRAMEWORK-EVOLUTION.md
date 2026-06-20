@@ -9,6 +9,14 @@ where they shape an API decision.
 Proposed design, Migration, Backward compatibility, Breaking changes, Risk,
 Effort, Expected benefits.
 
+> **Status note (post v1.8.0, 2026-06-20).** The RFCs below (slog, module split,
+> auth/authz abstraction, …) are **still all open** — v1.8.0 was a *security
+> hardening* release, not a structural one. The one overlap: RFC-003's intent that
+> "audience/revocation become first-class options" was partly down-paid by the
+> opt-in `jwtauth.WithAudience` (#7) and `jwtauth.WithRevocationCheck` (#17),
+> which are option-shaped seams the future `TokenVerifier`/`RevocationChecker`
+> interfaces can absorb. No RFC here is yet implemented.
+
 ---
 
 ## North-Star Thesis
