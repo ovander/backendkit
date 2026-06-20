@@ -6,6 +6,8 @@ All notable changes to backendkit are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-06-20
+
 ### Security
 
 - **jwtauth: enforce a minimum RSA key size (2048 bits) for JWKS keys.**

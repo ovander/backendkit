@@ -56,7 +56,7 @@ backendkit packages that foundation into a single, versioned dependency so every
 ## Installation
 
 ```bash
-go get github.com/ovander/backendkit@v1.7.0
+go get github.com/ovander/backendkit@v1.8.0
 ```
 
 ```go
@@ -65,7 +65,7 @@ module github.com/your-org/my-service
 
 go 1.25
 
-require github.com/ovander/backendkit v1.7.0
+require github.com/ovander/backendkit v1.8.0
 ```
 
 ---
