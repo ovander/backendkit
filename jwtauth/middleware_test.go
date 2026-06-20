@@ -1,6 +1,7 @@
 package jwtauth_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -318,6 +319,26 @@ func TestHandler_NoRevocationCheck_AllowsToken(t *testing.T) {
 
 	if code := serveWithToken(t, m, key, claimsWithVersion("42", 1)); code != http.StatusOK {
 		t.Errorf("expected 200 when revocation checking is disabled, got %d", code)
+	}
+}
+
+// ─── Issuer validation warning (F-5) ────────────────────────────────────────
+
+func TestNew_WarnsOnEmptyIssuer(t *testing.T) {
+	var buf bytes.Buffer
+	l := logrus.New()
+	l.SetOutput(&buf)
+	entry := logrus.NewEntry(l)
+
+	_ = jwtauth.New("http://example/jwks.json", "", entry)
+	if !strings.Contains(buf.String(), "issuer validation disabled") {
+		t.Errorf("expected empty-issuer warning, got: %s", buf.String())
+	}
+
+	buf.Reset()
+	_ = jwtauth.New("http://example/jwks.json", "https://issuer.example", entry)
+	if strings.Contains(buf.String(), "issuer validation disabled") {
+		t.Errorf("did not expect warning when issuer is set, got: %s", buf.String())
 	}
 }
 

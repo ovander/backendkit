@@ -143,6 +143,9 @@ func WithRevocationCheck(fn RevocationChecker) Option {
 // Optional behaviour (e.g. audience validation) is configured via opts; see
 // WithAudience. Passing no options preserves the historical behaviour, so
 // existing three-argument calls continue to compile and behave unchanged.
+//
+// When issuer is empty the iss claim is not enforced; New logs a warning at
+// construction so the disabled check is visible at startup rather than silent.
 func New(jwksURL, issuer string, logger *logrus.Entry, opts ...Option) *Middleware {
 	m := &Middleware{
 		jwksURL:    jwksURL,
@@ -154,6 +157,9 @@ func New(jwksURL, issuer string, logger *logrus.Entry, opts ...Option) *Middlewa
 	}
 	for _, opt := range opts {
 		opt(m)
+	}
+	if issuer == "" && logger != nil {
+		logger.Warn("jwtauth: issuer validation disabled (empty issuer) — set issuer to enforce the iss claim")
 	}
 	return m
 }
