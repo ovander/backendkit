@@ -10,9 +10,13 @@ import (
 
 // AppError is the standard error type returned by services and handlers.
 type AppError struct {
-	Code       string `json:"code"`
-	Key        string `json:"key,omitempty"` // i18n key — frontend translates this
-	Message    string `json:"message"`       // English dev-facing message (logs only)
+	Code string `json:"code"`
+	Key  string `json:"key,omitempty"` // i18n key — frontend translates this
+	// Message is the human-readable message. It is serialized to the client for
+	// 4xx responses; for 5xx, WriteJSON replaces it with a generic status text
+	// (and drops Details) so internal/dev-facing strings never leak. The original
+	// Message is always available server-side via Error() for logging.
+	Message    string `json:"message"`
 	StatusCode int    `json:"-"`
 	Details    any    `json:"details,omitempty"`
 }
@@ -183,8 +187,22 @@ func codeForStatus(status int) string {
 }
 
 // WriteJSON writes the error as a JSON response to w.
+//
+// For 5xx responses the dev-facing Message and Details are not serialized — the
+// client receives a generic status message under the same Code — so internal
+// detail (e.g. apierror.Internal(err.Error())) cannot leak. 4xx responses are
+// written as-is. The full error remains available for logging via Error().
 func (e *AppError) WriteJSON(w http.ResponseWriter) {
+	out := *e
+	if e.StatusCode >= http.StatusInternalServerError {
+		if msg := http.StatusText(e.StatusCode); msg != "" {
+			out.Message = msg
+		} else {
+			out.Message = "internal server error"
+		}
+		out.Details = nil
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(e.StatusCode)
-	json.NewEncoder(w).Encode(ErrorResponse{Error: *e}) //nolint:errcheck
+	json.NewEncoder(w).Encode(ErrorResponse{Error: out}) //nolint:errcheck
 }
