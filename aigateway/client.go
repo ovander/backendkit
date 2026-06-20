@@ -149,6 +149,10 @@ func (c *Client) CallWithMaxTokens(ctx context.Context, prompt string, maxTokens
 // Internal provider implementations
 // ────────────────────────────────────────────────────────────────────────────
 
+// maxAIResponseBytes caps how much of a provider response is read into memory,
+// guarding against an oversized/hostile upstream body.
+const maxAIResponseBytes = 10 << 20 // 10 MiB
+
 func (c *Client) callOpenAI(ctx context.Context, prompt string, maxTokens int) (string, error) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"model":       "gpt-4",
@@ -170,7 +174,7 @@ func (c *Client) callOpenAI(ctx context.Context, prompt string, maxTokens int) (
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, maxAIResponseBytes))
 		return "", fmt.Errorf("OpenAI API HTTP %d: %s", resp.StatusCode, b)
 	}
 
@@ -181,7 +185,7 @@ func (c *Client) callOpenAI(ctx context.Context, prompt string, maxTokens int) (
 			} `json:"message"`
 		} `json:"choices"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxAIResponseBytes)).Decode(&result); err != nil {
 		return "", fmt.Errorf("decode openai response: %w", err)
 	}
 	if len(result.Choices) == 0 {
@@ -224,7 +228,7 @@ func (c *Client) callClaude(ctx context.Context, prompt string, maxTokens int) (
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, maxAIResponseBytes))
 		return "", fmt.Errorf("claude API HTTP %d: %s", resp.StatusCode, b)
 	}
 
@@ -234,7 +238,7 @@ func (c *Client) callClaude(ctx context.Context, prompt string, maxTokens int) (
 			Text string `json:"text"`
 		} `json:"content"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxAIResponseBytes)).Decode(&result); err != nil {
 		return "", fmt.Errorf("decode claude response: %w", err)
 	}
 	if len(result.Content) == 0 {

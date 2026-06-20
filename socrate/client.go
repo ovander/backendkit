@@ -168,10 +168,21 @@ func (c *Client) doWithServiceToken(ctx context.Context, method, fullURL string,
 	return c.doHTTP(ctx, tok, method, fullURL, body)
 }
 
-// readBody reads and closes the response body.
+// maxResponseBytes caps how much of a Socrate response body is read into memory,
+// guarding against a compromised/MITM upstream returning an enormous body.
+const maxResponseBytes = 10 << 20 // 10 MiB
+
+// readBody reads (up to maxResponseBytes) and closes the response body.
 func readBody(r *http.Response) ([]byte, error) {
 	defer func() { _ = r.Body.Close() }()
-	return io.ReadAll(r.Body)
+	b, err := io.ReadAll(io.LimitReader(r.Body, maxResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > maxResponseBytes {
+		return nil, fmt.Errorf("socrate: response exceeds %d bytes", maxResponseBytes)
+	}
+	return b, nil
 }
 
 // ────────────────────────────────────────────────────────────────────────────

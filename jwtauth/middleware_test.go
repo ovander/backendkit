@@ -7,9 +7,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -315,6 +318,30 @@ func TestHandler_NoRevocationCheck_AllowsToken(t *testing.T) {
 
 	if code := serveWithToken(t, m, key, claimsWithVersion("42", 1)); code != http.StatusOK {
 		t.Errorf("expected 200 when revocation checking is disabled, got %d", code)
+	}
+}
+
+// ─── Bounded JWKS read (F-8 / INV-12) ───────────────────────────────────────
+
+func TestHandler_RejectsOversizedJWKS(t *testing.T) {
+	key := generateTestKey(t)
+	pub := &key.PublicKey
+	nB64 := base64.RawURLEncoding.EncodeToString(pub.N.Bytes())
+	eB64 := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(pub.E)).Bytes())
+
+	// A valid key followed by >1 MiB of padding so the JSON object closes past
+	// the read limit; the bounded decoder truncates and fails, rejecting the token.
+	pad := strings.Repeat("x", (1<<20)+4096)
+	body := fmt.Sprintf(`{"keys":[{"kty":"RSA","use":"sig","kid":"k1","n":%q,"e":%q}],"pad":%q}`, nB64, eB64, pad)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, body)
+	}))
+	defer srv.Close()
+
+	m := jwtauth.New(srv.URL, "", testLogger())
+	if code := serveWithToken(t, m, key, claimsWithVersion("42", 0)); code != http.StatusUnauthorized {
+		t.Errorf("expected 401 when the JWKS body exceeds the read limit, got %d", code)
 	}
 }
 

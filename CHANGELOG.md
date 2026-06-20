@@ -8,6 +8,14 @@ All notable changes to backendkit are documented here. The format is based on
 
 ### Security
 
+- **jwtauth / socrate / aigateway: bound upstream response reads.** All reads of
+  upstream HTTP bodies are now capped with `io.LimitReader` — JWKS at 1 MiB,
+  Socrate and AI-provider responses at 10 MiB — so a compromised/MITM or oversized
+  upstream cannot exhaust memory. `socrate.readBody` returns an explicit error when
+  the cap is exceeded. Normal-size responses are unaffected. Addresses
+  **F-8 / INV-12** (`SECURITY-AUDIT.md`, `SECURITY-ARCHITECTURE.md`).
+  ([#24](https://github.com/ovander/backendkit/issues/24))
+
 - **socrate: path-escape `userID` in request URLs.** `socrate.Client` now wraps the
   caller-supplied `userID` in `url.PathEscape` at every endpoint that interpolates
   it (`GetUser`, `UpdateUserRole`, `DeleteUser`, `ResendVerification`,
