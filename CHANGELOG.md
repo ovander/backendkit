@@ -6,6 +6,8 @@ All notable changes to backendkit are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-06-20
+
 ### Security
 
 - **jwtauth: warn when issuer validation is disabled.** `jwtauth.New` now logs a
