@@ -194,21 +194,22 @@ framework to guarantee, with VERIFIED / VIOLATED / DELEGATED status and evidence
 | INV-6 | Every tenant-scoped op is bound to a non-nil verified tenant | ~~VIOLATED~~ → **VERIFIED ✱ (opt-in)** | `RequireTenant` shipped #15 (F-3) |
 | INV-7 | Authorization is mandatory for protected resources | **PARTIAL** | opt-in middleware `README.md:259-265` |
 | INV-8 | Abuse controls cannot be bypassed by omitting identity | ~~VIOLATED~~ → **PARTIAL** | `RequireTenant` (#15) blocks nil-tenant upstream; limiter still in-memory/per-tenant (F-4) |
-| INV-9 | Errors/panics never disclose internal state to clients | **PARTIAL** | Recover ✔ `recover.go`; `Message` serialized ✗ `errors.go:15` vs `186-190` (F-17, open) |
-| INV-10 | Secrets are never logged or serialized | **VERIFIED** | no secret logging; `aigateway client.go:91-95` |
-| INV-11 | Untrusted input cannot restructure outbound requests | **VIOLATED** | unescaped path params `socrate client.go:443…592` (F-7, open) |
-| INV-12 | Resource consumption is bounded | **PARTIAL** | BodyLimit ✔; unbounded upstream reads ✗ (F-8, open). Supply-chain CVEs cleared via Go 1.26.4 (#11) |
+| INV-9 | Errors/panics never disclose internal state to clients | ~~PARTIAL~~ → **VERIFIED** | Recover ✔; 5xx Message/Details redacted shipped #29 (F-17, v1.9.0) |
+| INV-10 | Secrets are never logged or serialized | **VERIFIED** | no secret logging; opt-in `gormlogger.WithSQLRedaction` for SQL values shipped #27 (F-9, v1.9.0) |
+| INV-11 | Untrusted input cannot restructure outbound requests | ~~VIOLATED~~ → **VERIFIED** | `url.PathEscape` on socrate userID shipped #23 (F-7, v1.9.0) |
+| INV-12 | Resource consumption is bounded | ~~PARTIAL~~ → **VERIFIED** | BodyLimit ✔; upstream reads bounded shipped #25 (F-8, v1.9.0); stdlib CVEs cleared via Go 1.26.4 (#11) |
 | INV-13 | Cryptographic keys meet a minimum strength | ~~VIOLATED~~ → **VERIFIED** | min 2048-bit + exponent validation shipped #19 (F-10); **default-on** |
 | INV-14 | Security-relevant actions are durably, tamper-evidently recorded | **DELEGATED** | only reads Socrate logs `client.go:835`; no writer |
 
-**Score (v1.8.0): 5 VERIFIED, 3 VERIFIED✱ (opt-in), 4 PARTIAL, 1 VIOLATED,
-1 DELEGATED** — was *4 VERIFIED, 4 PARTIAL, 4 VIOLATED, 2 DELEGATED*. The three
-formerly-VIOLATED auth/tenant invariants (INV-2, INV-3, INV-6) now have shipped
-controls and are verified **when enabled**; INV-13 is verified by default; INV-8
-downgraded from violated to partial. The remaining hard gap is **INV-11**
-(socrate path-escaping, F-7); INV-7/9/12 remain partial (F-17, F-8 open). The
-v2.0 step is flipping the ✱ controls to default-on so the guarantees hold without
-per-app configuration.
+**Score (v1.9.0): 8 VERIFIED, 3 VERIFIED✱ (opt-in), 2 PARTIAL, 0 VIOLATED,
+1 DELEGATED** — was *4 VERIFIED, 4 PARTIAL, 4 VIOLATED, 2 DELEGATED* at first
+review; *5/3/4/1/1* after v1.8.0. **No invariant is VIOLATED.** v1.9.0 moved
+INV-9 (5xx error redaction, #29), INV-11 (socrate path-escaping, #23), and INV-12
+(bounded reads, #25) to VERIFIED, and confirmed INV-10 (opt-in SQL redaction,
+#27). Only **INV-7** (mandatory authz) and **INV-8** (distributed rate-limit
+store) remain PARTIAL, and the three ✱ auth/tenant controls (INV-2/3/6) are
+verified **when enabled**. The remaining v2.0 step is flipping the ✱ controls to
+default-on so the guarantees hold without per-app configuration.
 
 ---
 
@@ -475,26 +476,26 @@ Scale 0–5 (0 ad-hoc · 3 defined/repeatable · 5 optimised). Levels below are
 
 | Dimension | Level (v1.8.0) | Basis |
 |-----------|:-----:|-------|
-| Secure design | **4** (was 3) | Controls now provided for every Critical; fail-closed gates; minimal crypto |
-| AuthN/AuthZ completeness | **3** (was 2) | aud + revocation shipped (#7/#17); object-level & mandatory-authz still gaps |
-| Invariant enforcement | **3** (was 2) | 1 violated, 4 partial, 3 verified✱(opt-in), rest verified (§6) |
-| Crypto architecture | **4** (was 3) | Delegated + pinned; **min key size now enforced** (#19) |
+| Secure design | **4** (was 3) | Controls provided for every Critical; fail-closed gates; minimal crypto |
+| AuthN/AuthZ completeness | **3** (was 2) | aud + revocation + issuer-warning shipped; object-level & mandatory-authz still gaps |
+| Invariant enforcement | **4** (was 2) | **0 violated**, 2 partial, 3 verified✱(opt-in), 8 verified (§6) |
+| Crypto architecture | **4** (was 3) | Delegated + pinned; min key size enforced (#19) |
 | Supply-chain assurance | **3** (was 2) | `govulncheck` clean on Go 1.26.4, deps current (#11/#13); still **no SCA job in CI** |
-| Verification/testing | **3** (was 2) | Added negative tests for audience/revocation/key-size; `alg=none` still missing |
-| Observability/audit | **2** (—) | Good correlation; no native audit writer; SQL-value log leakage (F-9) open |
-| Process (CI/lint/deprecation) | **4** (—) | race+vet+lint, SemVer + changelog discipline, shipped v1.8.0 cleanly |
-| **Overall maturity** | **≈3.3 / 5** (was 2.5) | "Defined and security-hardened; default-on guarantees pending v2.0" |
+| Verification/testing | **3** (was 2) | Negative tests for aud/revocation/key-size/oversized-JWKS/path-escape/redaction; `alg=none` still missing |
+| Observability/audit | **3** (was 2) | Good correlation; opt-in SQL redaction (#27) closes log leakage; no native audit writer |
+| Process (CI/lint/deprecation) | **4** (—) | race+vet+lint, SemVer + changelog discipline, shipped v1.8.0 + v1.9.0 cleanly |
+| **Overall maturity** | **≈3.6 / 5** (was 2.5) | "Hardened; zero violated invariants; default-on guarantees + native audit pending v2.0" |
 
 ## 15. Enterprise Readiness Score
 
-Post v1.8.0 (pre-remediation score in parentheses):
+Post v1.8.0 + v1.9.0 (pre-remediation score in parentheses):
 
 | Use as… | Score /10 | Rationale |
 |---------|:---------:|-----------|
-| Trusted **dependency / component** (app supplies compensating controls) | **8** (was 7) | Controls now present in-framework; gaps documented & coverable app-side |
-| **Sole** security foundation, single-tenant SaaS | **7** (was 6) | Workable; F-5/F-17 remain; in-memory rate limit accepted |
-| **Sole** security foundation, **multi-tenant enterprise** | **6** (was 4) | INV-2/3/6 controls **exist** but are opt-in (must be enabled); F-7/F-9 open |
-| Regulated (HIPAA/PCI/Gov) | **4** (was 3) | Revocation + key-strength now addressed; audit durability & log minimisation (F-9) still unmet |
+| Trusted **dependency / component** (app supplies compensating controls) | **8** (was 7) | Controls present in-framework; remaining gaps documented |
+| **Sole** security foundation, single-tenant SaaS | **8** (was 6) | All High + Medium closed; in-memory rate limit accepted single-instance |
+| **Sole** security foundation, **multi-tenant enterprise** | **7** (was 4) | INV-2/3/6 controls present but opt-in (must be enabled); distributed rate-limit store still open |
+| Regulated (HIPAA/PCI/Gov) | **5** (was 3) | Revocation, key-strength, log minimisation, error redaction addressed; native audit durability still unmet |
 
 ---
 
@@ -536,28 +537,31 @@ this becomes a framework I *would* endorse as an enterprise security foundation.
 WITHHOLD as a sole multi-tenant enterprise security foundation until INV-2,
 INV-3, INV-6, and INV-8 are enforced.**
 
-### Revised standing — post v1.8.0 (2026-06-20)
+### Revised standing — post v1.8.0 + v1.9.0 (2026-06-20)
 
-The "additive v1.x work" anticipated above **has shipped.** The framework now
-provides every previously-violated control: audience binding (`WithAudience`, #7),
-revocation (`WithRevocationCheck`, #17), tenant enforcement (`RequireTenant`, #15),
-and weak-key rejection is **default-on** (#19, INV-13 → VERIFIED). INV-8 drops
-from violated to partial (RequireTenant blocks the nil-tenant bypass upstream).
-The supply-chain note is closed: `govulncheck` passes on the Go 1.26.4 toolchain
-with `golang-jwt v5.2.2` (#11/#13). The attack trees in §7 no longer succeed
-against a *correctly configured* deployment — their "KILL" lines are now shipped
-code.
+The entire v1.x roadmap anticipated above **has shipped.** v1.8.0 provided every
+previously-violated control — audience binding (`WithAudience`, #7), revocation
+(`WithRevocationCheck`, #17), tenant enforcement (`RequireTenant`, #15) — plus
+default-on weak-key rejection (#19). **v1.9.0 closed every Medium and the last
+VIOLATED invariant:** socrate path-escaping (#23, INV-11 → VERIFIED), bounded
+upstream reads (#25, INV-12 → VERIFIED), gormlogger SQL redaction (#27, INV-10),
+5xx error redaction (#29, INV-9 → VERIFIED), and the empty-issuer warning (#31).
+**No invariant is VIOLATED.** INV-8 is the lone abuse-control caveat (distributed
+rate-limit store still pending). `govulncheck` passes on Go 1.26.4 with
+`golang-jwt v5.2.2`. The §7 attack trees no longer succeed against a correctly
+configured deployment — their "KILL" lines are shipped code.
 
 The one structural caveat that remains: INV-2/INV-3/INV-6 are **opt-in** (the
 `✱` in §6), so the guarantee holds only when each app enables them. The remaining
-v2.0 step is the default-flip (audience required, tenant write-once) plus the
-open Mediums (F-7 socrate path-escaping — the last VIOLATED invariant INV-11; F-8,
-F-9, F-17) and a `govulncheck` CI job.
+v2.0 work is the default-flip (audience required, tenant write-once), a distributed
+rate-limit store (INV-8), a native audit writer (INV-14), and a `govulncheck` CI
+job.
 
 **Revised recommendation: APPROVE AS A DEPENDENCY, and APPROVE as a multi-tenant
 enterprise security foundation *for any service that enables the shipped controls*
-(`WithAudience` + `WithRevocationCheck` + `RequireTenant`). Full by-default
-endorsement awaits the v2.0 default-flips and closing F-7/F-9.**
+(`WithAudience` + `WithRevocationCheck` + `RequireTenant`). With all High and
+Medium findings closed, full by-default endorsement awaits only the v2.0
+default-flips.**
 
 ### Verification limits (no speculation)
 The following are **delegated trust** and cannot be verified from this repo —
