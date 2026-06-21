@@ -16,6 +16,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # Full history + tags so the changelog step can resolve the previous
+          # tag and `git log <prev>..HEAD` produces complete release notes
+          # (a shallow clone yields only the tip commit).
+          fetch-depth: 0
 
       - name: Extract tag name
         id: tag
