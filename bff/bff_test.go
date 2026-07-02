@@ -2,6 +2,7 @@ package bff
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -333,3 +334,42 @@ func TestCookieHostPrefix(t *testing.T) {
 
 // ensure the proxy type is what we expect (compile-time guard).
 var _ = httputil.ReverseProxy{}
+
+func TestSessionSnapshotRoundTrip(t *testing.T) {
+	now := time.Now().Truncate(time.Second) // JSON round-trips to second precision
+	orig := NewSession("sid", "csrf-tok", tokenSet("at", "rt", 300), UserInfo{Sub: "u1", Email: "a@b.com", Roles: []string{"admin", "viewer"}}, now)
+	orig.SetTokens(tokenSet("at2", "rt2", 600), now.Add(time.Minute))
+	orig.Touch(now.Add(2 * time.Minute))
+
+	snap := orig.Snapshot()
+	b, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatalf("marshal snapshot: %v", err)
+	}
+	var decoded SessionSnapshot
+	if err := json.Unmarshal(b, &decoded); err != nil {
+		t.Fatalf("unmarshal snapshot: %v", err)
+	}
+
+	rehydrated := NewSessionFromSnapshot(decoded)
+	if rehydrated.ID() != orig.ID() {
+		t.Errorf("ID mismatch: %q vs %q", rehydrated.ID(), orig.ID())
+	}
+	if rehydrated.AccessToken() != orig.AccessToken() || rehydrated.RefreshToken() != orig.RefreshToken() {
+		t.Errorf("token mismatch: got at=%q rt=%q, want at=%q rt=%q",
+			rehydrated.AccessToken(), rehydrated.RefreshToken(), orig.AccessToken(), orig.RefreshToken())
+	}
+	if !rehydrated.MatchCSRF("csrf-tok") {
+		t.Error("CSRF did not survive round-trip")
+	}
+	if rehydrated.User().Sub != "u1" || len(rehydrated.User().Roles) != 2 {
+		t.Errorf("user did not survive round-trip: %+v", rehydrated.User())
+	}
+	// AccessValid depends on accessExpiry, which was captured in the snapshot.
+	if !rehydrated.AccessValid(now.Add(time.Minute+30*time.Second), 0) {
+		t.Error("access expiry did not survive round-trip")
+	}
+	if rehydrated.AccessValid(now.Add(11*time.Minute), 0) {
+		t.Error("rehydrated session should be expired well past its access expiry")
+	}
+}
