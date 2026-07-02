@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -102,7 +103,7 @@ func (c *Client) ListApps(ctx context.Context) (*AppListResponse, error) {
 
 // GetApp retrieves a single app by numeric ID.
 func (c *Client) GetApp(ctx context.Context, appID string) (*App, error) {
-	resp, err := c.doWithJWT(ctx, http.MethodGet, c.adminURL("/api/admin/apps/"+appID), nil)
+	resp, err := c.doWithJWT(ctx, http.MethodGet, c.adminURL("/api/admin/apps/"+url.PathEscape(appID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +147,7 @@ func (c *Client) CreateApp(ctx context.Context, req CreateAppRequest) (*AppWithS
 
 // UpdateApp modifies an existing application's metadata.
 func (c *Client) UpdateApp(ctx context.Context, appID string, req UpdateAppRequest) (*App, error) {
-	resp, err := c.doWithJWT(ctx, http.MethodPut, c.adminURL("/api/admin/apps/"+appID), req)
+	resp, err := c.doWithJWT(ctx, http.MethodPut, c.adminURL("/api/admin/apps/"+url.PathEscape(appID)), req)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +167,7 @@ func (c *Client) UpdateApp(ctx context.Context, appID string, req UpdateAppReque
 
 // DeleteApp permanently removes an OAuth application.
 func (c *Client) DeleteApp(ctx context.Context, appID string) error {
-	resp, err := c.doWithJWT(ctx, http.MethodDelete, c.adminURL("/api/admin/apps/"+appID), nil)
+	resp, err := c.doWithJWT(ctx, http.MethodDelete, c.adminURL("/api/admin/apps/"+url.PathEscape(appID)), nil)
 	if err != nil {
 		return err
 	}
@@ -184,7 +185,7 @@ func (c *Client) DeleteApp(ctx context.Context, appID string) error {
 // The new plaintext secret is returned and shown only once.
 func (c *Client) RotateSecret(ctx context.Context, appID string) (*AppWithSecret, error) {
 	resp, err := c.doWithJWT(ctx, http.MethodPost,
-		c.adminURL("/api/admin/apps/"+appID+"/rotate-secret"), nil)
+		c.adminURL("/api/admin/apps/"+url.PathEscape(appID)+"/rotate-secret"), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +259,7 @@ func (c *Client) AdminListUsers(ctx context.Context, page, pageSize int) (*Globa
 
 // AdminGetUser retrieves a single user by numeric ID (superadmin only).
 func (c *Client) AdminGetUser(ctx context.Context, userID string) (*GlobalUser, error) {
-	resp, err := c.doWithJWT(ctx, http.MethodGet, c.adminURL("/api/admin/users/"+userID), nil)
+	resp, err := c.doWithJWT(ctx, http.MethodGet, c.adminURL("/api/admin/users/"+url.PathEscape(userID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +282,7 @@ func (c *Client) AdminGetUser(ctx context.Context, userID string) (*GlobalUser, 
 
 // AdminDeleteUser permanently deletes a user account (superadmin only).
 func (c *Client) AdminDeleteUser(ctx context.Context, userID string) error {
-	resp, err := c.doWithJWT(ctx, http.MethodDelete, c.adminURL("/api/admin/users/"+userID), nil)
+	resp, err := c.doWithJWT(ctx, http.MethodDelete, c.adminURL("/api/admin/users/"+url.PathEscape(userID)), nil)
 	if err != nil {
 		return err
 	}
@@ -297,7 +298,7 @@ func (c *Client) AdminDeleteUser(ctx context.Context, userID string) error {
 
 // GetUserApps returns all apps the given user belongs to.
 func (c *Client) GetUserApps(ctx context.Context, userID string) ([]App, error) {
-	resp, err := c.doWithJWT(ctx, http.MethodGet, c.adminURL("/api/admin/users/"+userID+"/apps"), nil)
+	resp, err := c.doWithJWT(ctx, http.MethodGet, c.adminURL("/api/admin/users/"+url.PathEscape(userID)+"/apps"), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -317,7 +318,7 @@ func (c *Client) GetUserApps(ctx context.Context, userID string) ([]App, error) 
 
 // BlockUser disables a user account. The user will be unable to log in.
 func (c *Client) BlockUser(ctx context.Context, userID string) error {
-	resp, err := c.doWithJWT(ctx, http.MethodPost, c.adminURL("/api/admin/users/"+userID+"/block"), nil)
+	resp, err := c.doWithJWT(ctx, http.MethodPost, c.adminURL("/api/admin/users/"+url.PathEscape(userID)+"/block"), nil)
 	if err != nil {
 		return err
 	}
@@ -333,7 +334,7 @@ func (c *Client) BlockUser(ctx context.Context, userID string) error {
 
 // UnlockUser re-enables a blocked or locked-out user account.
 func (c *Client) UnlockUser(ctx context.Context, userID string) error {
-	resp, err := c.doWithJWT(ctx, http.MethodPost, c.adminURL("/api/admin/users/"+userID+"/unlock"), nil)
+	resp, err := c.doWithJWT(ctx, http.MethodPost, c.adminURL("/api/admin/users/"+url.PathEscape(userID)+"/unlock"), nil)
 	if err != nil {
 		return err
 	}
@@ -350,7 +351,7 @@ func (c *Client) UnlockUser(ctx context.Context, userID string) error {
 // RevokeUserTokens invalidates all active tokens for the user, forcing a re-login.
 func (c *Client) RevokeUserTokens(ctx context.Context, userID string) error {
 	resp, err := c.doWithJWT(ctx, http.MethodPost,
-		c.adminURL("/api/admin/users/"+userID+"/revoke-tokens"), nil)
+		c.adminURL("/api/admin/users/"+url.PathEscape(userID)+"/revoke-tokens"), nil)
 	if err != nil {
 		return err
 	}
@@ -418,7 +419,7 @@ func (c *Client) ListSuperadmins(ctx context.Context) ([]Superadmin, error) {
 
 // GetSuperadmin retrieves a superadmin by numeric ID.
 func (c *Client) GetSuperadmin(ctx context.Context, id string) (*Superadmin, error) {
-	resp, err := c.doWithJWT(ctx, http.MethodGet, c.adminURL("/api/admin/superadmins/"+id), nil)
+	resp, err := c.doWithJWT(ctx, http.MethodGet, c.adminURL("/api/admin/superadmins/"+url.PathEscape(id)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -461,7 +462,7 @@ func (c *Client) CreateSuperadmin(ctx context.Context, req CreateSuperadminReque
 
 // UpdateSuperadmin updates a superadmin's name or email.
 func (c *Client) UpdateSuperadmin(ctx context.Context, id string, req UpdateSuperadminRequest) (*Superadmin, error) {
-	resp, err := c.doWithJWT(ctx, http.MethodPut, c.adminURL("/api/admin/superadmins/"+id), req)
+	resp, err := c.doWithJWT(ctx, http.MethodPut, c.adminURL("/api/admin/superadmins/"+url.PathEscape(id)), req)
 	if err != nil {
 		return nil, err
 	}
@@ -481,7 +482,7 @@ func (c *Client) UpdateSuperadmin(ctx context.Context, id string, req UpdateSupe
 
 // DeleteSuperadmin removes a superadmin account.
 func (c *Client) DeleteSuperadmin(ctx context.Context, id string) error {
-	resp, err := c.doWithJWT(ctx, http.MethodDelete, c.adminURL("/api/admin/superadmins/"+id), nil)
+	resp, err := c.doWithJWT(ctx, http.MethodDelete, c.adminURL("/api/admin/superadmins/"+url.PathEscape(id)), nil)
 	if err != nil {
 		return err
 	}
@@ -599,7 +600,7 @@ func (c *Client) BlockIP(ctx context.Context, req BlockIPRequest) (*BlockedIP, e
 // UnblockIP removes an IP from the block list by its record ID.
 func (c *Client) UnblockIP(ctx context.Context, id string) error {
 	resp, err := c.doWithJWT(ctx, http.MethodDelete,
-		c.adminURL("/api/admin/security/blocked-ips/"+id), nil)
+		c.adminURL("/api/admin/security/blocked-ips/"+url.PathEscape(id)), nil)
 	if err != nil {
 		return err
 	}
@@ -616,7 +617,7 @@ func (c *Client) UnblockIP(ctx context.Context, id string) error {
 // GetIPReputation returns the security reputation for an IP address.
 func (c *Client) GetIPReputation(ctx context.Context, ip string) (*IPReputation, error) {
 	resp, err := c.doWithJWT(ctx, http.MethodGet,
-		c.adminURL("/api/admin/security/ip-reputation/"+ip), nil)
+		c.adminURL("/api/admin/security/ip-reputation/"+url.PathEscape(ip)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -737,7 +738,7 @@ func (c *Client) ListAdminLogs(ctx context.Context, page, pageSize int) (*AdminL
 
 // GetAdminLog retrieves a single admin audit log entry by ID.
 func (c *Client) GetAdminLog(ctx context.Context, id string) (*AdminLog, error) {
-	resp, err := c.doWithJWT(ctx, http.MethodGet, c.adminURL("/api/admin/logs/"+id), nil)
+	resp, err := c.doWithJWT(ctx, http.MethodGet, c.adminURL("/api/admin/logs/"+url.PathEscape(id)), nil)
 	if err != nil {
 		return nil, err
 	}

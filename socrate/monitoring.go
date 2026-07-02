@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -105,7 +106,7 @@ func (c *Client) ListSessions(ctx context.Context, page, pageSize int) (*Session
 // GetUserSessions returns the active sessions for a single user.
 func (c *Client) GetUserSessions(ctx context.Context, userID string) (*SessionListResponse, error) {
 	resp, err := c.doWithJWT(ctx, http.MethodGet,
-		c.adminURL("/api/admin/users/"+userID+"/sessions"), nil)
+		c.adminURL("/api/admin/users/"+url.PathEscape(userID)+"/sessions"), nil)
 	if err != nil {
 		return nil, err
 	}

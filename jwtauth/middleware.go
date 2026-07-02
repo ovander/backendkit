@@ -24,6 +24,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/ovander/backendkit/apierror"
 	"github.com/ovander/backendkit/ctxutil"
@@ -86,9 +87,32 @@ type Middleware struct {
 	httpClient      *http.Client
 	cacheTTL        time.Duration
 
-	mu        sync.RWMutex
-	keys      map[string]*rsa.PublicKey
-	lastFetch time.Time
+	// leeway is the clock-skew tolerance applied to time-based claim validation
+	// (exp/nbf/iat). See WithLeeway.
+	leeway time.Duration
+
+	// minRefetchInterval is the minimum wall-clock gap between outbound JWKS
+	// refetches. A cache miss (unknown kid) within this window does NOT trigger
+	// a network fetch — it returns key-not-found — so an attacker presenting
+	// tokens with random kids cannot force one outbound fetch per request. The
+	// first miss after the window elapses triggers exactly one refetch, so a
+	// legitimately rotated kid still resolves. See WithMinRefetchInterval.
+	minRefetchInterval time.Duration
+
+	// negativeCacheTTL is how long a recently-seen unknown kid is remembered so
+	// repeated tokens bearing that kid short-circuit without attempting work.
+	// See WithNegativeCacheTTL.
+	negativeCacheTTL time.Duration
+
+	// sf coalesces concurrent refetches: N simultaneous cache misses trigger a
+	// single outbound JWKS fetch rather than N (single-flight).
+	sf singleflight.Group
+
+	mu                 sync.RWMutex
+	keys               map[string]*rsa.PublicKey
+	lastFetch          time.Time
+	lastRefetchAttempt time.Time
+	negativeCache      map[string]time.Time // kid → time it was last seen unknown
 }
 
 // Option configures optional Middleware behaviour. Pass options to New.
@@ -137,6 +161,40 @@ func WithRevocationCheck(fn RevocationChecker) Option {
 	return func(m *Middleware) { m.revocationCheck = fn }
 }
 
+// WithLeeway sets the clock-skew tolerance applied to time-based claim checks
+// (exp/nbf/iat). The default is 60s. A negative value is ignored.
+func WithLeeway(d time.Duration) Option {
+	return func(m *Middleware) {
+		if d >= 0 {
+			m.leeway = d
+		}
+	}
+}
+
+// WithMinRefetchInterval sets the minimum interval between outbound JWKS
+// refetches (default 15s). Within this window a token bearing an unknown kid is
+// rejected without a network fetch, so an attacker cannot turn unknown-kid
+// tokens into one outbound request per attempt. Set a small value in tests that
+// need a rotated key to resolve quickly. A non-positive value is ignored.
+func WithMinRefetchInterval(d time.Duration) Option {
+	return func(m *Middleware) {
+		if d > 0 {
+			m.minRefetchInterval = d
+		}
+	}
+}
+
+// WithNegativeCacheTTL sets how long a recently-seen unknown kid is remembered
+// so repeated unknown-kid tokens short-circuit without work (default 30s). A
+// non-positive value is ignored.
+func WithNegativeCacheTTL(d time.Duration) Option {
+	return func(m *Middleware) {
+		if d > 0 {
+			m.negativeCacheTTL = d
+		}
+	}
+}
+
 // New creates a Middleware that validates tokens against the JWKS at jwksURL.
 // issuer is optional; when non-empty it is enforced via jwt.WithIssuer.
 //
@@ -148,12 +206,15 @@ func WithRevocationCheck(fn RevocationChecker) Option {
 // construction so the disabled check is visible at startup rather than silent.
 func New(jwksURL, issuer string, logger *logrus.Entry, opts ...Option) *Middleware {
 	m := &Middleware{
-		jwksURL:    jwksURL,
-		issuer:     issuer,
-		logger:     logger,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
-		keys:       make(map[string]*rsa.PublicKey),
-		cacheTTL:   1 * time.Hour,
+		jwksURL:            jwksURL,
+		issuer:             issuer,
+		logger:             logger,
+		httpClient:         &http.Client{Timeout: 10 * time.Second},
+		keys:               make(map[string]*rsa.PublicKey),
+		cacheTTL:           1 * time.Hour,
+		leeway:             60 * time.Second,
+		minRefetchInterval: 15 * time.Second,
+		negativeCacheTTL:   30 * time.Second,
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -264,7 +325,13 @@ func extractBearer(r *http.Request) (string, error) {
 
 func (m *Middleware) validateToken(tokenString string) (*SocrateClaims, error) {
 	claims := &SocrateClaims{}
-	opts := []jwt.ParserOption{jwt.WithValidMethods([]string{"RS256"})}
+	opts := []jwt.ParserOption{
+		jwt.WithValidMethods([]string{"RS256"}),
+		// Reject tokens minted without an exp claim (a missing exp otherwise
+		// means "never expires"). Also apply a small leeway for clock skew.
+		jwt.WithExpirationRequired(),
+		jwt.WithLeeway(m.leeway),
+	}
 	if m.issuer != "" {
 		opts = append(opts, jwt.WithIssuer(m.issuer))
 	}
@@ -293,13 +360,43 @@ func (m *Middleware) getKey(kid string) (*rsa.PublicKey, error) {
 	m.mu.RLock()
 	key, ok := m.keys[kid]
 	expired := time.Since(m.lastFetch) > m.cacheTTL
+	inCooldown := time.Since(m.lastRefetchAttempt) < m.minRefetchInterval
+	negAt, negged := m.negativeCache[kid]
+	negFresh := negged && time.Since(negAt) < m.negativeCacheTTL
 	m.mu.RUnlock()
 
+	// Fast path: a fresh, known key.
 	if ok && !expired {
 		return key, nil
 	}
 
-	if err := m.fetchJWKS(); err != nil {
+	// Negative cache: this kid was recently seen and was absent from the JWKS.
+	// Don't attempt any work — repeated unknown-kid tokens can't accumulate cost.
+	if !ok && negFresh {
+		return nil, fmt.Errorf("kid %q not found in JWKS", kid)
+	}
+
+	// Cooldown: within minRefetchInterval of the last refetch attempt we do NOT
+	// hit the network. A miss here means an unknown kid cannot force an outbound
+	// fetch per request; a stale-but-present key is still served rather than
+	// dropped. The first miss AFTER the window triggers exactly one refetch, so a
+	// legitimately rotated kid still resolves.
+	if inCooldown {
+		if ok {
+			return key, nil
+		}
+		return nil, fmt.Errorf("kid %q not found in JWKS", kid)
+	}
+
+	// Single-flight: coalesce concurrent refetches so N simultaneous misses
+	// trigger a single outbound JWKS fetch.
+	_, err, _ := m.sf.Do("jwks-refetch", func() (interface{}, error) {
+		m.mu.Lock()
+		m.lastRefetchAttempt = time.Now()
+		m.mu.Unlock()
+		return nil, m.fetchJWKS()
+	})
+	if err != nil {
 		if ok {
 			m.logger.WithError(err).Warn("JWKS refresh failed, using cached key")
 			return key, nil
@@ -311,9 +408,28 @@ func (m *Middleware) getKey(kid string) (*rsa.PublicKey, error) {
 	key, ok = m.keys[kid]
 	m.mu.RUnlock()
 	if !ok {
+		m.rememberUnknownKid(kid)
 		return nil, fmt.Errorf("kid %q not found in JWKS", kid)
 	}
 	return key, nil
+}
+
+// rememberUnknownKid records kid in the negative cache and opportunistically
+// prunes expired entries so a stream of distinct unknown kids can't grow the map
+// without bound.
+func (m *Middleware) rememberUnknownKid(kid string) {
+	now := time.Now()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.negativeCache == nil {
+		m.negativeCache = make(map[string]time.Time)
+	}
+	for k, t := range m.negativeCache {
+		if now.Sub(t) >= m.negativeCacheTTL {
+			delete(m.negativeCache, k)
+		}
+	}
+	m.negativeCache[kid] = now
 }
 
 func (m *Middleware) fetchJWKS() error {
@@ -353,6 +469,9 @@ func (m *Middleware) fetchJWKS() error {
 	m.mu.Lock()
 	m.keys = keys
 	m.lastFetch = time.Now()
+	// Fresh key material may include a previously-unknown kid, so drop negative
+	// cache entries that would otherwise mask a just-rotated key.
+	m.negativeCache = nil
 	m.mu.Unlock()
 
 	m.logger.WithField("key_count", len(keys)).Debug("JWKS keys refreshed")

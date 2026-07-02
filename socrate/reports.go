@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -57,7 +58,7 @@ func (c *Client) GenerateSecurityReport(ctx context.Context, req ReportRequest) 
 // GetReportStatus returns the status record of a previously generated report.
 // Returns nil, nil when the report ID is unknown (404).
 func (c *Client) GetReportStatus(ctx context.Context, reportID string) (*Report, error) {
-	resp, err := c.doWithJWT(ctx, http.MethodGet, c.adminURL("/api/admin/reports/"+reportID), nil)
+	resp, err := c.doWithJWT(ctx, http.MethodGet, c.adminURL("/api/admin/reports/"+url.PathEscape(reportID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +78,7 @@ func (c *Client) GetReportStatus(ctx context.Context, reportID string) (*Report,
 // GET /api/admin/reports/{id}/download.
 func (c *Client) DownloadReport(ctx context.Context, reportID string) ([]byte, error) {
 	resp, err := c.doWithJWT(ctx, http.MethodGet,
-		c.adminURL("/api/admin/reports/"+reportID+"/download"), nil)
+		c.adminURL("/api/admin/reports/"+url.PathEscape(reportID)+"/download"), nil)
 	if err != nil {
 		return nil, err
 	}

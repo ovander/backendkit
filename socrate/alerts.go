@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -97,7 +98,7 @@ func (c *Client) CreateAlertRule(ctx context.Context, req AlertRuleRequest) (*Al
 
 // UpdateAlertRule updates an existing alert rule by ID.
 func (c *Client) UpdateAlertRule(ctx context.Context, id string, req AlertRuleRequest) (*AlertRule, error) {
-	resp, err := c.doWithJWT(ctx, http.MethodPut, c.adminURL("/api/admin/alerts/rules/"+id), req)
+	resp, err := c.doWithJWT(ctx, http.MethodPut, c.adminURL("/api/admin/alerts/rules/"+url.PathEscape(id)), req)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +111,7 @@ func (c *Client) UpdateAlertRule(ctx context.Context, id string, req AlertRuleRe
 
 // DeleteAlertRule removes an alert rule by ID.
 func (c *Client) DeleteAlertRule(ctx context.Context, id string) error {
-	resp, err := c.doWithJWT(ctx, http.MethodDelete, c.adminURL("/api/admin/alerts/rules/"+id), nil)
+	resp, err := c.doWithJWT(ctx, http.MethodDelete, c.adminURL("/api/admin/alerts/rules/"+url.PathEscape(id)), nil)
 	if err != nil {
 		return err
 	}
@@ -135,7 +136,7 @@ func (c *Client) GetAlertHistory(ctx context.Context, page, pageSize int) (*Aler
 func (c *Client) AcknowledgeAlert(ctx context.Context, id, note string) error {
 	body := map[string]string{"note": note}
 	resp, err := c.doWithJWT(ctx, http.MethodPost,
-		c.adminURL("/api/admin/alerts/"+id+"/acknowledge"), body)
+		c.adminURL("/api/admin/alerts/"+url.PathEscape(id)+"/acknowledge"), body)
 	if err != nil {
 		return err
 	}
