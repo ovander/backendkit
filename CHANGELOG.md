@@ -6,6 +6,34 @@ All notable changes to backendkit are documented here. The format is based on
 
 ## [Unreleased]
 
+### Security
+
+- **jwtauth: guard the JWKS refetch against unauthenticated DoS.** A token's
+  `kid` is attacker-controlled and checked before signature verification, so an
+  unknown `kid` previously forced one synchronous outbound JWKS fetch **per
+  request**. Refetches are now (1) coalesced with `golang.org/x/sync/singleflight`
+  so N concurrent misses trigger a single fetch, (2) rate-limited by a
+  `minRefetchInterval` cooldown (default 15s; `WithMinRefetchInterval`) so a miss
+  inside the window returns key-not-found without a network call, and (3) backed
+  by a short negative cache (default 30s; `WithNegativeCacheTTL`) for recently-seen
+  unknown kids. A legitimately rotated key still resolves: the first miss after the
+  cooldown triggers exactly one refetch. Addresses **H-1** (`SECURITY-AUDIT.md`).
+
+- **jwtauth: require `exp` and add clock-skew leeway.** The parser now sets
+  `jwt.WithExpirationRequired()`, so a token minted without an `exp` claim (which
+  would otherwise never expire) is rejected, plus `jwt.WithLeeway` (default 60s;
+  `WithLeeway`) for time-based claim validation. Addresses **M-2**
+  (`SECURITY-AUDIT.md`).
+
+- **socrate: complete path-segment escaping (corrects the F-7 ledger).** v1.9.0
+  escaped only `client.go`; the remaining admin/monitoring/alerts/reports methods
+  still concatenated raw caller-supplied path segments. `url.PathEscape` is now
+  applied to every caller-supplied segment across `admin.go`, `monitoring.go`,
+  `alerts.go` and `reports.go` (user/app/superadmin/blocked-ip/ip-reputation/log/
+  alert-rule/report IDs). Internal server-resolved values (e.g. the app ID) are
+  intentionally left unescaped, as in `client.go`. Addresses **M-1** and corrects
+  the previously overstated **F-7** "Fixed" claim (`SECURITY-AUDIT.md`).
+
 ## [1.9.0] - 2026-06-20
 
 ### Security

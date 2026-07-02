@@ -37,7 +37,7 @@ enterprise scale.** The most serious are not bugs in the code that exists, but
 | F-3 | **High** | **Tenant isolation is fail-open and absent by default** (`tenant_id` not issued by default server; `uuid.Nil` flows downstream) | Framework + Config | ✅ **Fixed** — `httpware.RequireTenant` opt-in (#15) |
 | F-4 | **High** | **Per-tenant rate limiter is a no-op in the default configuration** and fails open | Framework + Config | ◑ **Partial** — `RequireTenant` (#15) blocks nil-tenant upstream; limiter itself unchanged (in-memory, per-tenant) |
 | F-5 | Medium | Issuer validation is optional and silently disabled when empty | Framework | ✅ **Fixed** — `jwtauth.New` warns on empty issuer (#31, v1.9.0); mandatory = v2.0 |
-| F-7 | Medium | **Path-parameter injection** in `socrate.Client` (unescaped `userID` in URLs) | Framework | ✅ **Fixed** — `url.PathEscape` on all userID segments (#23, v1.9.0) |
+| F-7 | Medium | **Path-parameter injection** in `socrate.Client` (unescaped path segments in URLs) | Framework | ✅ **Fixed** — `url.PathEscape` now applied to every caller-supplied path segment across the full `client.go` / `admin.go` / `monitoring.go` / `alerts.go` / `reports.go` surface. The v1.9.0 change (#23) escaped only `client.go`; the remaining admin/monitoring/alerts/reports methods (M-1) are now escaped too. |
 | F-8 | Medium | Unbounded body reads (JWKS, Socrate, AI gateway) — memory-exhaustion vector | Framework | ✅ **Fixed** — `io.LimitReader` caps (#25, v1.9.0) |
 | F-9 | Medium | `gormlogger` logs **full SQL with bound parameter values** (PII/secrets in logs) | Framework | ✅ **Fixed** — opt-in `WithSQLRedaction` (#27, v1.9.0) |
 | F-10 | Medium | JWKS parser accepts **weak RSA keys** (no min modulus, exponent truncated) | Framework | ✅ **Fixed** — min 2048-bit + exponent validation (#19) |
@@ -331,12 +331,19 @@ Cryptography verdict: **correct by delegation and omission.** No weak primitives
   concrete SQL lives in the app. No injection surface here, but no parameterisation
   guarantee provided either.
 - **F-7 (MEDIUM) — Path-parameter injection in `socrate.Client`.** Caller-supplied
-  `userID` is interpolated into request paths with `fmt.Sprintf` and **no
-  escaping**: `client.go:443, 503, 524, 545, 566, 592`. A `userID` containing
-  `/`, `?`, or `..` rewrites the target endpoint (e.g. `userID = "1/reset-password"`
-  hits a different route, or `?role=admin` injects a query). Note the contrast:
-  `search` *is* `url.QueryEscape`d (`client.go:415`), so the omission on path
-  segments is inconsistent. *Fix:* `url.PathEscape` every dynamic path segment.
+  path segments were interpolated into request paths with `+` / `fmt.Sprintf` and
+  **no escaping**. A segment containing `/`, `?`, or `..` rewrites the target
+  endpoint (e.g. `userID = "1/reset-password"` hits a different route, or
+  `?role=admin` injects a query). Note the contrast: `search` *is*
+  `url.QueryEscape`d (`client.go:415`), so the omission on path segments was
+  inconsistent. *Fix:* `url.PathEscape` every dynamic path segment.
+  **Status: resolved (see M-1 below).** The v1.9.0 change (#23) escaped only
+  `client.go`; the follow-up (M-1) extends `url.PathEscape` to every remaining
+  caller-supplied segment across `admin.go` (app/user/superadmin/blocked-ip/
+  ip-reputation/log IDs), `monitoring.go` (user sessions), `alerts.go` (rule and
+  alert IDs) and `reports.go` (report IDs). Internal, trusted values resolved from
+  the server (e.g. the app ID from `getAppID`) are intentionally left unescaped, as
+  in `client.go`.
 - **SSRF:** base URLs are operator-config, not user-input (`client.go:55-60`,
   `aigateway.go:79-80` are hardcoded to the real providers) — low SSRF risk, but
   F-7 allows partial path control.
