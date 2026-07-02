@@ -6,6 +6,24 @@ All notable changes to backendkit are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-07-02
+
+### Added
+
+- **`bff` package: shared Backend-for-Frontend runtime.** Consolidates the
+  session/cookie/CSRF/PKCE/proxy core that the oauth2-admin and
+  oauth2-monitoring consoles previously each hand-rolled: a race-safe
+  `Session`/`SessionStore` (per-session mutex around the pointer returned by
+  the in-memory store), a **fail-closed** `Gateway.ProxyWithSession` (no valid
+  session ⇒ 401; never passes a request or client-supplied `Authorization`
+  header through unless `AllowPassthrough` is explicitly set), double-submit
+  CSRF enforcement on mutating methods, `SanitizeReturnTo` (rejects backslash
+  and control-character open-redirect vectors), S256-only PKCE, and `__Host-`
+  cookie helpers. Token calls delegate to `socrate.Client` via a
+  `TokenRefresher` interface rather than being re-implemented. Both consoles
+  migrate onto this package to stop carrying duplicated security-critical
+  code.
+
 ### Security
 
 - **jwtauth: guard the JWKS refetch against unauthenticated DoS.** A token's
