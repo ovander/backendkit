@@ -1,0 +1,335 @@
+package bff
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/ovander/backendkit/socrate"
+)
+
+// ---- redirect ----
+
+func TestSanitizeReturnTo(t *testing.T) {
+	cases := map[string]string{
+		"/dashboard":       "/dashboard",
+		"/a/b?x=1#frag":    "/a/b?x=1#frag",
+		"":                 "/",
+		"relative":         "/",
+		"//evil.com":       "/",
+		"/\\evil.com":      "/", // backslash → protocol-relative after browser folding
+		"/\\/evil.com":     "/",
+		"/path\\to":        "/", // backslash anywhere
+		"https://evil.com": "/",
+		"/x\ny":            "/", // control char
+		"/x\x00y":          "/",
+	}
+	for in, want := range cases {
+		if got := SanitizeReturnTo(in); got != want {
+			t.Errorf("SanitizeReturnTo(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// ---- crypto ----
+
+func TestPKCES256(t *testing.T) {
+	// RFC 7636 Appendix B known vector.
+	const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+	const want = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+	if got := S256Challenge(verifier); got != want {
+		t.Fatalf("S256Challenge = %q, want %q", got, want)
+	}
+	p := NewPKCE()
+	if p.Verifier == "" || p.Challenge != S256Challenge(p.Verifier) {
+		t.Fatalf("NewPKCE produced inconsistent pair: %+v", p)
+	}
+}
+
+func TestRandomTokenUnique(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 1000; i++ {
+		tok := RandomToken(32)
+		if seen[tok] {
+			t.Fatal("RandomToken collision")
+		}
+		seen[tok] = true
+	}
+}
+
+func TestConstantTimeEqual(t *testing.T) {
+	if !ConstantTimeEqual("abc", "abc") {
+		t.Error("equal strings reported unequal")
+	}
+	if ConstantTimeEqual("abc", "abd") || ConstantTimeEqual("abc", "ab") {
+		t.Error("unequal strings reported equal")
+	}
+}
+
+// ---- session store ----
+
+func tokenSet(access, refresh string, ttl int) *socrate.TokenSet {
+	return &socrate.TokenSet{AccessToken: access, RefreshToken: refresh, ExpiresIn: ttl, TokenType: "Bearer"}
+}
+
+func TestMemoryStoreExpiry(t *testing.T) {
+	base := time.Now()
+	now := base
+	st := NewMemoryStore(30*time.Minute, 8*time.Hour)
+	st.now = func() time.Time { return now }
+
+	s := NewSession("sid", "csrf", tokenSet("at", "rt", 300), UserInfo{Sub: "u1"}, now)
+	st.Put(s)
+
+	if _, ok := st.Get("sid"); !ok {
+		t.Fatal("session should be present")
+	}
+	// Idle expiry.
+	now = base.Add(31 * time.Minute)
+	if _, ok := st.Get("sid"); ok {
+		t.Fatal("session should be idle-expired and evicted")
+	}
+	if _, ok := st.sessions["sid"]; ok {
+		t.Fatal("expired session should be deleted from map")
+	}
+}
+
+func TestMemoryStoreAbsoluteExpiry(t *testing.T) {
+	base := time.Now()
+	now := base
+	st := NewMemoryStore(0, 2*time.Hour) // no idle bound
+	st.now = func() time.Time { return now }
+	st.Put(NewSession("sid", "csrf", tokenSet("at", "rt", 300), UserInfo{}, now))
+	now = base.Add(3 * time.Hour)
+	if _, ok := st.Get("sid"); ok {
+		t.Fatal("session should be absolute-expired")
+	}
+}
+
+// TestSessionConcurrency drives concurrent field access through the accessors to
+// prove the per-session lock closes the data race (run with -race).
+func TestSessionConcurrency(t *testing.T) {
+	s := NewSession("sid", "csrf", tokenSet("at", "rt", 300), UserInfo{Roles: []string{"admin"}}, time.Now())
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.Touch(time.Now())
+			s.SetTokens(tokenSet("at2", "rt2", 300), time.Now())
+			_ = s.AccessToken()
+			_ = s.RefreshToken()
+			_ = s.User()
+			_ = s.MatchCSRF("csrf")
+			_ = s.AccessValid(time.Now(), time.Second)
+		}()
+	}
+	wg.Wait()
+}
+
+// ---- gateway ----
+
+type fakeRefresher struct {
+	calls int
+	err   error
+}
+
+func (f *fakeRefresher) RefreshToken(_ context.Context, _ string) (*socrate.TokenSet, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	return tokenSet("refreshed-at", "new-rt", 300), nil
+}
+
+func newTestGateway(upstream *url.URL, store SessionStore, ref TokenRefresher) *Gateway {
+	return &Gateway{
+		Store:       store,
+		Cookie:      CookieConfig{Name: "sess", Secure: false, MaxAge: 3600},
+		Refresher:   ref,
+		AuthEnabled: true,
+	}
+}
+
+// upstreamRecorder echoes what it received so tests can assert header handling.
+func upstreamRecorder(gotAuth *string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("upstream-ok"))
+	}))
+}
+
+func TestProxyFailsClosedWithoutSession(t *testing.T) {
+	var gotAuth string
+	up := upstreamRecorder(&gotAuth)
+	defer up.Close()
+	uu, _ := url.Parse(up.URL)
+
+	g := newTestGateway(uu, NewMemoryStore(time.Hour, time.Hour), &fakeRefresher{})
+	h := g.ProxyWithSession(NewSingleHostProxy(uu))
+
+	// No cookie, and a client-supplied bearer that must NOT reach upstream.
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/x", nil)
+	req.Header.Set("Authorization", "Bearer attacker-token")
+	rec := httptest.NewRecorder()
+	h(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401, got %d", rec.Code)
+	}
+	if gotAuth != "" {
+		t.Fatalf("upstream must not be reached; saw Authorization %q", gotAuth)
+	}
+}
+
+func TestProxyPassthroughFlag(t *testing.T) {
+	var gotAuth string
+	up := upstreamRecorder(&gotAuth)
+	defer up.Close()
+	uu, _ := url.Parse(up.URL)
+
+	g := newTestGateway(uu, NewMemoryStore(time.Hour, time.Hour), &fakeRefresher{})
+	g.AllowPassthrough = true // explicit legacy opt-in
+	h := g.ProxyWithSession(NewSingleHostProxy(uu))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/x", nil)
+	rec := httptest.NewRecorder()
+	h(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("passthrough: want 200, got %d", rec.Code)
+	}
+}
+
+func TestProxyInjectsBearerAndStripsClientAuth(t *testing.T) {
+	var gotAuth string
+	up := upstreamRecorder(&gotAuth)
+	defer up.Close()
+	uu, _ := url.Parse(up.URL)
+
+	store := NewMemoryStore(time.Hour, time.Hour)
+	g := newTestGateway(uu, store, &fakeRefresher{})
+	h := g.ProxyWithSession(NewSingleHostProxy(uu))
+
+	s := NewSession("sid", "csrf", tokenSet("session-at", "rt", 300), UserInfo{Sub: "u1"}, time.Now())
+	store.Put(s)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/x", nil)
+	req.AddCookie(&http.Cookie{Name: "sess", Value: "sid"})
+	req.Header.Set("Authorization", "Bearer attacker-token") // must be stripped
+	rec := httptest.NewRecorder()
+	h(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+	if gotAuth != "Bearer session-at" {
+		t.Fatalf("upstream Authorization = %q, want session bearer", gotAuth)
+	}
+}
+
+func TestProxyCSRFEnforcedOnMutations(t *testing.T) {
+	var gotAuth string
+	up := upstreamRecorder(&gotAuth)
+	defer up.Close()
+	uu, _ := url.Parse(up.URL)
+
+	store := NewMemoryStore(time.Hour, time.Hour)
+	g := newTestGateway(uu, store, &fakeRefresher{})
+	h := g.ProxyWithSession(NewSingleHostProxy(uu))
+	store.Put(NewSession("sid", "the-csrf", tokenSet("at", "rt", 300), UserInfo{}, time.Now()))
+
+	// POST without CSRF header → 403, upstream untouched.
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/x", nil)
+	req.AddCookie(&http.Cookie{Name: "sess", Value: "sid"})
+	rec := httptest.NewRecorder()
+	h(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("POST w/o CSRF: want 403, got %d", rec.Code)
+	}
+	if gotAuth != "" {
+		t.Fatal("upstream reached despite missing CSRF")
+	}
+
+	// POST with correct CSRF → 200.
+	req2 := httptest.NewRequest(http.MethodPost, "/api/admin/x", nil)
+	req2.AddCookie(&http.Cookie{Name: "sess", Value: "sid"})
+	req2.Header.Set(DefaultCSRFHeader, "the-csrf")
+	rec2 := httptest.NewRecorder()
+	h(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("POST w/ CSRF: want 200, got %d", rec2.Code)
+	}
+}
+
+func TestEnsureFreshRefreshesExpiredToken(t *testing.T) {
+	store := NewMemoryStore(time.Hour, time.Hour)
+	ref := &fakeRefresher{}
+	uu, _ := url.Parse("http://upstream.invalid")
+	g := newTestGateway(uu, store, ref)
+
+	// Access token already expired (ExpiresIn 0 → expiry = created).
+	s := NewSession("sid", "csrf", tokenSet("old-at", "rt", 0), UserInfo{}, time.Now().Add(-time.Minute))
+	access, err := g.EnsureFresh(context.Background(), s)
+	if err != nil {
+		t.Fatalf("EnsureFresh: %v", err)
+	}
+	if ref.calls != 1 || access != "refreshed-at" {
+		t.Fatalf("want 1 refresh and refreshed token, got calls=%d access=%q", ref.calls, access)
+	}
+
+	// Fresh token → no refresh call.
+	before := ref.calls
+	if _, err := g.EnsureFresh(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	if ref.calls != before {
+		t.Fatalf("valid token should not trigger refresh")
+	}
+}
+
+func TestProxyRefreshFailureClearsSession(t *testing.T) {
+	uu, _ := url.Parse("http://upstream.invalid")
+	store := NewMemoryStore(time.Hour, time.Hour)
+	g := newTestGateway(uu, store, &fakeRefresher{err: errors.New("refresh boom")})
+	h := g.ProxyWithSession(NewSingleHostProxy(uu))
+
+	store.Put(NewSession("sid", "csrf", tokenSet("expired", "rt", 0), UserInfo{}, time.Now().Add(-time.Minute)))
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/x", nil)
+	req.AddCookie(&http.Cookie{Name: "sess", Value: "sid"})
+	rec := httptest.NewRecorder()
+	h(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401 on refresh failure, got %d", rec.Code)
+	}
+	if _, ok := store.Get("sid"); ok {
+		t.Fatal("session should be deleted after refresh failure")
+	}
+}
+
+func TestCookieHostPrefix(t *testing.T) {
+	secure := CookieConfig{Name: "sess", Secure: true}
+	if secure.CookieName() != "__Host-sess" {
+		t.Fatalf("secure cookie name = %q", secure.CookieName())
+	}
+	dev := CookieConfig{Name: "sess", Secure: false}
+	if dev.CookieName() != "sess" {
+		t.Fatalf("dev cookie name = %q", dev.CookieName())
+	}
+	rec := httptest.NewRecorder()
+	secure.SetSession(rec, "v")
+	ck := rec.Result().Cookies()[0]
+	if !ck.HttpOnly || !ck.Secure || ck.SameSite != http.SameSiteStrictMode || ck.Path != "/" {
+		t.Fatalf("cookie flags wrong: %+v", ck)
+	}
+}
+
+// ensure the proxy type is what we expect (compile-time guard).
+var _ = httputil.ReverseProxy{}
