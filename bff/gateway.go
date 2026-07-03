@@ -98,16 +98,18 @@ func (g *Gateway) SessionFromRequest(r *http.Request) (*Session, bool) {
 // rotating refresh token is single-use, so if two requests raced to refresh
 // independently, the loser's call would fail and its session would be torn
 // down even though the winner just refreshed it successfully. Every waiter on
-// a coalesced call re-checks AccessValid first (with no leeway) so a session
-// freshened by a sibling goroutine while this one waited never issues a
-// redundant refresh.
+// a coalesced call re-checks AccessValid against the same RefreshLeeway
+// before spending a refresh, so a session freshened by a sibling goroutine
+// while this one waited never issues a redundant refresh — and a session
+// that is merely inside the proactive-refresh window (not yet expired) still
+// gets refreshed rather than being handed back its stale token.
 func (g *Gateway) EnsureFresh(ctx context.Context, s *Session) (string, error) {
 	now := g.now()
 	if s.AccessValid(now, g.refreshLeeway()) {
 		return s.AccessToken(), nil
 	}
 	v, err, _ := g.refreshGroup.Do(s.ID(), func() (any, error) {
-		if s.AccessValid(g.now(), 0) {
+		if s.AccessValid(g.now(), g.refreshLeeway()) {
 			return s.AccessToken(), nil
 		}
 		ts, err := g.Refresher.RefreshToken(ctx, s.RefreshToken())

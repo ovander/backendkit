@@ -425,6 +425,31 @@ func TestEnsureFreshCoalescesConcurrentRefreshes(t *testing.T) {
 	}
 }
 
+// TestEnsureFreshRefreshesWithinLeewayButNotYetExpired reproduces a
+// regression in the singleflight coalescing added for P2-8: the inner
+// re-check inside refreshGroup.Do must use the same RefreshLeeway as the
+// outer check, not a leeway of 0. A leeway-0 check only asks "has this
+// actually expired", so a token merely inside the proactive-refresh window
+// (still technically valid) was wrongly handed back stale instead of being
+// refreshed.
+func TestEnsureFreshRefreshesWithinLeewayButNotYetExpired(t *testing.T) {
+	store := NewMemoryStore(time.Hour, time.Hour)
+	ref := &fakeRefresher{}
+	uu, _ := url.Parse("http://upstream.invalid")
+	g := newTestGateway(uu, store, ref)
+
+	// 5s of validity remains — inside the 30s default RefreshLeeway, but not
+	// actually expired yet.
+	s := NewSession("sid", "csrf", tokenSet("stale-at", "rt", 5), UserInfo{}, time.Now())
+	access, err := g.EnsureFresh(context.Background(), s)
+	if err != nil {
+		t.Fatalf("EnsureFresh: %v", err)
+	}
+	if ref.calls != 1 || access != "refreshed-at" {
+		t.Fatalf("want proactive refresh (1 call, refreshed token), got calls=%d access=%q", ref.calls, access)
+	}
+}
+
 func TestProxyRefreshFailureClearsSession(t *testing.T) {
 	uu, _ := url.Parse("http://upstream.invalid")
 	store := NewMemoryStore(time.Hour, time.Hour)

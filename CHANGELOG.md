@@ -6,6 +6,20 @@ All notable changes to backendkit are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.11.1] - 2026-07-03
+
+### Fixed
+
+- **bff: `EnsureFresh` no longer returns a stale token from inside the
+  proactive-refresh window.** The singleflight coalescing added in 1.11.0
+  for P2-8 re-checked token validity inside the coalesced call with a leeway
+  of `0` instead of `RefreshLeeway`, so a token that was inside the 30s
+  proactive-refresh window but not yet actually expired was handed back
+  unrefreshed. The inner check now uses the same `RefreshLeeway` as the
+  outer check, matching the documented "refreshed if within `RefreshLeeway`
+  of expiry" behaviour. Regression introduced in 1.11.0; no action needed
+  beyond upgrading past it.
+
 ## [1.11.0] - 2026-07-03
 
 ### Security
