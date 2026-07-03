@@ -6,6 +6,50 @@ All notable changes to backendkit are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-07-03
+
+### Security
+
+- **bff: reject an empty stored CSRF token as a match.** `Session.MatchCSRF`
+  called `ConstantTimeCompare` directly, so a session that somehow lost its
+  CSRF value (`csrf == ""`) matched an empty request token, silently
+  disabling CSRF protection for that session. `MatchCSRF` now always returns
+  `false` when the stored value is empty. Addresses **P2-6**
+  (`CR-socrate-suite-security-pass2.md`, upstream `go-oauth2` repo).
+
+- **bff: `Gateway`'s zero value is now fail-closed.** `Gateway.AuthEnabled`
+  defaulted to `false`, so a bare `&Gateway{...}` struct literal — no field
+  set — was a fully-open pass-through, contradicting this package's
+  documented "fail-closed by default" behaviour. The field is renamed and
+  inverted to **`DisableAuth`**, so the zero value now means "auth enforced."
+  Addresses **P2-7** (`CR-socrate-suite-security-pass2.md`).
+
+- **bff: coalesce concurrent token refreshes per session.** Concurrent
+  `EnsureFresh` calls near token expiry could each independently spend the
+  same single-use rotating refresh token; only the first succeeded and the
+  rest tore down the session. `EnsureFresh` now coalesces concurrent calls
+  per session ID via `singleflight.Group` (mirroring the `jwtauth` H-1 JWKS
+  fix), with every waiter re-checking token validity before spending a
+  refresh. Addresses **P2-8** (`CR-socrate-suite-security-pass2.md`).
+
+### Migration
+
+**Breaking:** `Gateway.AuthEnabled` no longer exists — it is renamed and
+inverted to `Gateway.DisableAuth`. Any caller that set `AuthEnabled: true`
+in a struct literal must delete that line (the new zero-value default
+already means the same thing); a caller that never set the field is
+unaffected in behaviour but must still update to compile against this
+version. `AllowPassthrough`, `CSRFHeader`, `RefreshLeeway` and `Now` are
+unchanged.
+
+```go
+// before
+gw := &bff.Gateway{Store: store, Cookie: cookie, Refresher: r, AuthEnabled: true}
+
+// after
+gw := &bff.Gateway{Store: store, Cookie: cookie, Refresher: r}
+```
+
 ## [1.10.0] - 2026-07-02
 
 ### Added
