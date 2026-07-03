@@ -194,6 +194,44 @@ populates the request context with the user's identity, role, app-roles, plan,
 and the **raw JWT** (so the `socrate.Client` can forward it). On failure it
 writes an `apierror` JSON 401 and stops the chain.
 
+### Recommended security hardening
+
+The setup above is intentionally minimal. For production, layer on the opt-in
+controls below — each is a one-liner, and each has a **precondition** worth
+checking against your Socrate deployment first:
+
+```go
+auth := jwtauth.New(jwksURL, issuer, log,
+	// Reject a token minted for another app that shares this Socrate issuer/JWKS.
+	// Precondition: Socrate must populate the `aud` claim with this app's
+	// client_id — confirm first, or tokens without `aud` are rejected with 401.
+	jwtauth.WithAudience(os.Getenv("SOCRATE_CLIENT_ID")),
+
+	// Make logout / password-change / admin-revoke take effect before token exp
+	// instead of waiting it out. Compare the token_version claim against your
+	// store; return an error to reject.
+	jwtauth.WithRevocationCheck(func(ctx context.Context, c *jwtauth.SocrateClaims) error {
+		if c.TokenVersion < store.CurrentTokenVersion(ctx, c.Subject) {
+			return errors.New("token_version superseded")
+		}
+		return nil
+	}),
+)
+
+// On tenant-scoped route groups, guarantee a tenant is present so no nil-tenant
+// request reaches your handlers. Precondition: Socrate issues the `tenant_id`
+// claim (the default server does not — see §5).
+r.Group(func(r chi.Router) {
+	r.Use(auth.Handler)
+	r.Use(httpware.RequireTenant) // 401 when ctxutil.GetTenantID == uuid.Nil
+	r.Mount("/orders", ordersRouter)
+})
+```
+
+Also enable `gormlogger.WithSQLRedaction()` in production so interpolated SQL
+parameter values (which may contain PII) stay out of logs. These controls landed
+in v1.8.0 / v1.9.0; setting an empty `issuer` now also logs a startup warning.
+
 ---
 
 ## 5. Backend: reading the authenticated user
@@ -642,6 +680,13 @@ Constructors: `NotFound`, `ValidationError`, `BadRequest`, `Unauthorized`,
 `Forbidden`, `Conflict`, `Internal`, `ServiceUnavailable`. `jwtauth.Middleware`
 already emits `Unauthorized` for bad tokens in this exact shape.
 
+> **Frontend note — 5xx responses (since v1.9.0).** For **server errors (≥ 500)**,
+> `WriteJSON` replaces `message` with a generic status text and omits `details`,
+> so internal detail can never leak to clients. **Key your UI on `error.code`, not
+> `error.message`, for 5xx** — the message is intentionally non-specific there.
+> 4xx responses are unchanged: their `code`, `key`, and `message` are all yours to
+> display.
+
 ---
 
 ## 9. Role & plan gating
@@ -679,6 +724,21 @@ r.With(gate.Require(tiering.PlanPro)).Get("/analytics", analyticsHandler)
 `Require` reads `ctxutil.GetUserPlan` (defaults to `"freemium"` when the server
 doesn't issue a `plan` claim) and blocks lower tiers, pointing them at your
 upgrade URL.
+
+### Tenant isolation (`httpware.RequireTenant`)
+
+For multi-tenant apps, mount `httpware.RequireTenant` after `auth.Handler` on
+tenant-scoped route groups. It returns **401** when no tenant is in context
+(`ctxutil.GetTenantID == uuid.Nil`), so a handler can never run against the nil
+tenant. Requires Socrate to issue the `tenant_id` claim (see §5).
+
+```go
+r.Group(func(r chi.Router) {
+	r.Use(auth.Handler)
+	r.Use(httpware.RequireTenant)
+	r.Mount("/orders", ordersRouter)
+})
+```
 
 ---
 

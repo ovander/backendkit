@@ -293,6 +293,12 @@ if errors.Is(err, gorm.ErrRecordNotFound) {
 apierror.Internal("database error").WriteJSON(w)
 ```
 
+> **5xx responses are redacted (since v1.9.0).** For server errors (status ≥ 500),
+> `WriteJSON` replaces `message` with a generic status text and drops `details`, so
+> internal detail (e.g. `apierror.Internal(err.Error())`) cannot leak to clients.
+> The full message is still available server-side via `Error()` for logging, and
+> 4xx responses are unchanged. Clients should key on `error.code` for 5xx.
+
 Available constructors: `NotFound`, `BadRequest`, `Unauthorized`, `Forbidden`, `Conflict`, `ValidationError`, `TooManyRequests`, `Internal`, `BadGateway`, `ServiceUnavailable`.
 
 When the status is **dynamic** (e.g. proxying an upstream response) and the typed constructors don't fit, `New(status, msg)` builds an `AppError` for any status — deriving the same machine code the typed constructors use — and `Write(w, status, msg)` builds and writes it in one call:
@@ -403,9 +409,14 @@ db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
         glogger.Warn,                     // minimum level (Silent/Error/Warn/Info)
         200*time.Millisecond,             // slow-query threshold; 0 disables
         true,                             // demote ErrRecordNotFound to Debug
+        gormlogger.WithSQLRedaction(),    // production: keep SQL values out of logs
     ),
 })
 ```
+
+GORM hands the logger SQL with bound parameter values already interpolated, which
+can contain PII or secrets. In production pass `gormlogger.WithSQLRedaction()` so
+log records show `sql: "[redacted]"` while keeping timing, row count, and caller.
 
 ---
 
