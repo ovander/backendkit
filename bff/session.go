@@ -148,8 +148,61 @@ func (s *Session) SetUser(u UserInfo) {
 	s.mu.Unlock()
 }
 
+// SessionSnapshot is a serializable view of a Session's full state, for
+// durable stores (e.g. Postgres) that need to persist a session across
+// restarts. Session's fields are private (accessed only through the
+// concurrency-safe methods above), so a store that outlives the process uses
+// Session.Snapshot() to capture state to marshal and NewSessionFromSnapshot to
+// rehydrate a *Session after unmarshalling. All fields are JSON-tagged for
+// convenience; a store is free to use a different encoding.
+type SessionSnapshot struct {
+	ID           string    `json:"id"`
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token"`
+	IDToken      string    `json:"id_token"`
+	AccessExpiry time.Time `json:"access_expiry"`
+	CSRF         string    `json:"csrf"`
+	Created      time.Time `json:"created"`
+	LastSeen     time.Time `json:"last_seen"`
+	User         UserInfo  `json:"user"`
+}
+
+// Snapshot captures the session's full state for persistence.
+func (s *Session) Snapshot() SessionSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return SessionSnapshot{
+		ID:           s.id,
+		AccessToken:  s.accessToken,
+		RefreshToken: s.refreshToken,
+		IDToken:      s.idToken,
+		AccessExpiry: s.accessExpiry,
+		CSRF:         s.csrf,
+		Created:      s.created,
+		LastSeen:     s.lastSeen,
+		User:         s.user,
+	}
+}
+
+// NewSessionFromSnapshot rehydrates a *Session from a previously captured
+// SessionSnapshot (e.g. read back from a durable store after a restart).
+func NewSessionFromSnapshot(snap SessionSnapshot) *Session {
+	return &Session{
+		id:           snap.ID,
+		accessToken:  snap.AccessToken,
+		refreshToken: snap.RefreshToken,
+		idToken:      snap.IDToken,
+		accessExpiry: snap.AccessExpiry,
+		csrf:         snap.CSRF,
+		created:      snap.Created,
+		lastSeen:     snap.LastSeen,
+		user:         snap.User,
+	}
+}
+
 // SessionStore persists authenticated sessions. The in-memory implementation
-// is the default; a Postgres-backed store can implement the same interface.
+// is the default; a Postgres-backed store can implement the same interface,
+// using SessionSnapshot to (de)serialize each Session.
 type SessionStore interface {
 	Get(id string) (*Session, bool)
 	Put(s *Session)
