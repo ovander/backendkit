@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/ovander/backendkit/socrate"
 )
 
@@ -31,13 +33,16 @@ type Gateway struct {
 	Cookie    CookieConfig
 	Refresher TokenRefresher
 
-	// AuthEnabled gates the whole session model. When false the gateway is a
+	// DisableAuth turns the whole session model off, reducing the gateway to a
 	// pure pass-through (Phase-1 deploy before the SPA switches to cookies).
-	AuthEnabled bool
+	// The zero value (false) is the safe, fail-closed default: a Gateway built
+	// as a bare struct literal without setting this field still enforces
+	// sessions rather than silently proxying everything through.
+	DisableAuth bool
 
-	// AllowPassthrough, only meaningful when AuthEnabled, restores the legacy
-	// behaviour of forwarding a request that carries no valid session. It
-	// defaults to false: the safe, fail-closed default is to reject such
+	// AllowPassthrough, only meaningful when auth is enabled, restores the
+	// legacy behaviour of forwarding a request that carries no valid session.
+	// It defaults to false: the safe, fail-closed default is to reject such
 	// requests with 401 rather than proxy them (and any client-supplied
 	// Authorization header) upstream.
 	AllowPassthrough bool
@@ -48,6 +53,11 @@ type Gateway struct {
 	RefreshLeeway time.Duration
 	// Now overrides time.Now (tests).
 	Now func() time.Time
+
+	// refreshGroup coalesces concurrent EnsureFresh calls for the same
+	// session so a rotating refresh token is only spent once. Zero value is
+	// ready to use.
+	refreshGroup singleflight.Group
 }
 
 func (g *Gateway) now() time.Time {
@@ -83,17 +93,34 @@ func (g *Gateway) SessionFromRequest(r *http.Request) (*Session, bool) {
 // EnsureFresh returns a valid access token for the session, refreshing it via
 // the TokenRefresher if it is within RefreshLeeway of expiry. The refreshed
 // token set is stored back on the session under its lock.
+//
+// Concurrent calls for the same session are coalesced via refreshGroup: a
+// rotating refresh token is single-use, so if two requests raced to refresh
+// independently, the loser's call would fail and its session would be torn
+// down even though the winner just refreshed it successfully. Every waiter on
+// a coalesced call re-checks AccessValid first (with no leeway) so a session
+// freshened by a sibling goroutine while this one waited never issues a
+// redundant refresh.
 func (g *Gateway) EnsureFresh(ctx context.Context, s *Session) (string, error) {
 	now := g.now()
 	if s.AccessValid(now, g.refreshLeeway()) {
 		return s.AccessToken(), nil
 	}
-	ts, err := g.Refresher.RefreshToken(ctx, s.RefreshToken())
+	v, err, _ := g.refreshGroup.Do(s.ID(), func() (any, error) {
+		if s.AccessValid(g.now(), 0) {
+			return s.AccessToken(), nil
+		}
+		ts, err := g.Refresher.RefreshToken(ctx, s.RefreshToken())
+		if err != nil {
+			return "", err
+		}
+		s.SetTokens(ts, g.now())
+		return s.AccessToken(), nil
+	})
 	if err != nil {
 		return "", err
 	}
-	s.SetTokens(ts, now)
-	return s.AccessToken(), nil
+	return v.(string), nil
 }
 
 // IsUnsafeMethod reports whether the HTTP method mutates state and therefore
@@ -118,14 +145,14 @@ func (g *Gateway) CheckCSRF(r *http.Request, s *Session) bool {
 
 // ProxyWithSession returns a handler that injects the session's bearer onto the
 // request and forwards it upstream, stripping the session cookie and any
-// client-supplied Authorization header first. It is fail-closed: when
-// AuthEnabled and no valid session is present, it responds 401 rather than
-// proxying (unless AllowPassthrough is explicitly set). Mutating methods must
-// carry a matching CSRF token.
+// client-supplied Authorization header first. It is fail-closed: unless
+// DisableAuth is explicitly set, a request with no valid session gets a 401
+// rather than being proxied (unless AllowPassthrough is also explicitly set).
+// Mutating methods must carry a matching CSRF token.
 func (g *Gateway) ProxyWithSession(proxy *httputil.ReverseProxy) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Phase 1: sessions disabled entirely — pure pass-through.
-		if !g.AuthEnabled {
+		if g.DisableAuth {
 			proxy.ServeHTTP(w, r)
 			return
 		}
