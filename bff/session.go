@@ -124,11 +124,16 @@ func (s *Session) CSRF() string {
 }
 
 // MatchCSRF reports whether token equals the session's CSRF token, in constant
-// time.
+// time. An empty session CSRF token never matches (including an empty
+// token), so a session that somehow lost its CSRF value fails closed instead
+// of silently disabling CSRF protection.
 func (s *Session) MatchCSRF(token string) bool {
 	s.mu.Lock()
 	want := s.csrf
 	s.mu.Unlock()
+	if want == "" {
+		return false
+	}
 	return ConstantTimeEqual(token, want)
 }
 

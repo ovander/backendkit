@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -70,6 +71,18 @@ func TestConstantTimeEqual(t *testing.T) {
 	}
 	if ConstantTimeEqual("abc", "abd") || ConstantTimeEqual("abc", "ab") {
 		t.Error("unequal strings reported equal")
+	}
+}
+
+// TestMatchCSRFRejectsEmpty proves a session that lost (or never had) its
+// CSRF token fails closed instead of accepting an empty token as a match.
+func TestMatchCSRFRejectsEmpty(t *testing.T) {
+	s := NewSessionFromSnapshot(SessionSnapshot{ID: "sid", CSRF: ""})
+	if s.MatchCSRF("") {
+		t.Fatal("empty CSRF token must never match, even against an empty stored value")
+	}
+	if s.MatchCSRF("anything") {
+		t.Fatal("empty stored CSRF must not match any token")
 	}
 }
 
@@ -151,10 +164,9 @@ func (f *fakeRefresher) RefreshToken(_ context.Context, _ string) (*socrate.Toke
 
 func newTestGateway(upstream *url.URL, store SessionStore, ref TokenRefresher) *Gateway {
 	return &Gateway{
-		Store:       store,
-		Cookie:      CookieConfig{Name: "sess", Secure: false, MaxAge: 3600},
-		Refresher:   ref,
-		AuthEnabled: true,
+		Store:     store,
+		Cookie:    CookieConfig{Name: "sess", Secure: false, MaxAge: 3600},
+		Refresher: ref,
 	}
 }
 
@@ -187,6 +199,52 @@ func TestProxyFailsClosedWithoutSession(t *testing.T) {
 	}
 	if gotAuth != "" {
 		t.Fatalf("upstream must not be reached; saw Authorization %q", gotAuth)
+	}
+}
+
+// TestGatewayZeroValueFailsClosed proves a Gateway built as a bare struct
+// literal, without explicitly setting DisableAuth, still enforces sessions
+// (the zero value of DisableAuth is false — auth enabled).
+func TestGatewayZeroValueFailsClosed(t *testing.T) {
+	var gotAuth string
+	up := upstreamRecorder(&gotAuth)
+	defer up.Close()
+	uu, _ := url.Parse(up.URL)
+
+	g := &Gateway{
+		Store:     NewMemoryStore(time.Hour, time.Hour),
+		Cookie:    CookieConfig{Name: "sess", Secure: false, MaxAge: 3600},
+		Refresher: &fakeRefresher{},
+	}
+	h := g.ProxyWithSession(NewSingleHostProxy(uu))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/x", nil)
+	rec := httptest.NewRecorder()
+	h(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("zero-value Gateway must fail closed: want 401, got %d", rec.Code)
+	}
+	if gotAuth != "" {
+		t.Fatal("upstream must not be reached")
+	}
+}
+
+func TestGatewayDisableAuthPassesThrough(t *testing.T) {
+	var gotAuth string
+	up := upstreamRecorder(&gotAuth)
+	defer up.Close()
+	uu, _ := url.Parse(up.URL)
+
+	g := newTestGateway(uu, NewMemoryStore(time.Hour, time.Hour), &fakeRefresher{})
+	g.DisableAuth = true
+	h := g.ProxyWithSession(NewSingleHostProxy(uu))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/x", nil)
+	rec := httptest.NewRecorder()
+	h(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DisableAuth: want 200, got %d", rec.Code)
 	}
 }
 
@@ -292,6 +350,78 @@ func TestEnsureFreshRefreshesExpiredToken(t *testing.T) {
 	}
 	if ref.calls != before {
 		t.Fatalf("valid token should not trigger refresh")
+	}
+}
+
+// rotatingRefresher models a single-use rotating refresh token: reusing an
+// already-spent token is an error, exactly as a real OAuth server would
+// reject it. This is what makes TestEnsureFreshCoalescesConcurrentRefreshes a
+// meaningful reproduction of the P2-8 race — without coalescing, every
+// concurrent caller past the first would race to spend the same token and
+// only one would succeed.
+type rotatingRefresher struct {
+	mu    sync.Mutex
+	used  map[string]bool
+	calls int
+}
+
+func (r *rotatingRefresher) RefreshToken(_ context.Context, rt string) (*socrate.TokenSet, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.used == nil {
+		r.used = make(map[string]bool)
+	}
+	if r.used[rt] {
+		return nil, fmt.Errorf("refresh token %q already used", rt)
+	}
+	r.used[rt] = true
+	r.calls++
+	return tokenSet(fmt.Sprintf("at-%d", r.calls), fmt.Sprintf("rt-%d", r.calls), 300), nil
+}
+
+// TestEnsureFreshCoalescesConcurrentRefreshes reproduces P2-8: many concurrent
+// requests for the same expired session must share a single refresh call
+// (via refreshGroup), not race to spend the single-use rotating refresh
+// token. Run with -race.
+func TestEnsureFreshCoalescesConcurrentRefreshes(t *testing.T) {
+	store := NewMemoryStore(time.Hour, time.Hour)
+	ref := &rotatingRefresher{}
+	uu, _ := url.Parse("http://upstream.invalid")
+	g := newTestGateway(uu, store, ref)
+
+	s := NewSession("sid", "csrf", tokenSet("old-at", "rt-0", 0), UserInfo{}, time.Now().Add(-time.Minute))
+	store.Put(s)
+
+	const n = 20
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	accesses := make([]string, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			access, err := g.EnsureFresh(context.Background(), s)
+			errs[i], accesses[i] = err, access
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("goroutine %d: EnsureFresh failed: %v", i, err)
+		}
+	}
+	if ref.calls != 1 {
+		t.Fatalf("want exactly 1 refresh call across %d concurrent callers, got %d", n, ref.calls)
+	}
+	want := accesses[0]
+	for i, a := range accesses {
+		if a != want {
+			t.Fatalf("goroutine %d got access %q, want %q (all concurrent callers must observe the same refreshed token)", i, a, want)
+		}
+	}
+	if _, ok := store.Get("sid"); !ok {
+		t.Fatal("session must survive a coalesced refresh")
 	}
 }
 
