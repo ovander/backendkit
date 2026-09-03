@@ -70,6 +70,14 @@ for one behaviour change called out below.
   caller-supplied `period` of `24h&period=9999d` could previously inject or
   override parameters, and a `#` silently truncated the query.
 
+- **Build with a patched Go toolchain (`go1.26.6`) and `golang.org/x/text`
+  `v0.39.0`.** Clears the `govulncheck` findings that appeared since the last
+  release: GO-2026-6218 (`net/url`), GO-2026-6090 / GO-2026-5856
+  (`crypto/tls`), GO-2026-5972 (`encoding/asn1`), GO-2026-5026 (`net/http`
+  idna) and GO-2026-5970 (`x/text`). No library code changed. As before, the
+  `go` directive stays at `1.25.0`; the `toolchain` directive applies only
+  when backendkit is the main module, so consumers on Go 1.25 are unaffected.
+
 ### Notes
 
 - `Gateway` embeds a `singleflight.Group` since 1.11.0 and must be used by
