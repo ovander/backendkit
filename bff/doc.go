@@ -21,4 +21,15 @@
 // cookie uses the __Host- prefix when Secure, CSRF uses a constant-time
 // compare, and [SanitizeReturnTo] rejects backslash and control-character
 // open-redirect vectors.
+//
+// Token refresh is coalesced per session, runs detached from the triggering
+// request's cancellation, and is written through to the [SessionStore] so a
+// durable store (one that rehydrates a fresh [Session] per Get, e.g. Postgres)
+// keeps the rotated refresh token. Only a refresh the authorization server
+// rejects ([IsFatalRefreshError]) tears a session down; a transient failure
+// answers 502 and keeps it. [NewSingleHostProxy] strips client-supplied
+// IP-attribution headers so the upstream's rate limits, IP blocks and audit
+// trail cannot be steered by the browser, and [LoginBinding] ties a pending
+// login to the browser that started it so a captured callback URL cannot
+// swap a victim onto an attacker's session.
 package bff

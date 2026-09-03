@@ -6,6 +6,84 @@ All notable changes to backendkit are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-09-03
+
+Shared-gateway hardening from the Socrate suite pass-3 audit
+(`CR-socrate-suite-security-pass3.md`, `go-oauth2` repo). Additive except
+for one behaviour change called out below.
+
+> **Behaviour change (P3-12):** `Gateway.ProxyWithSession` no longer deletes
+> the session on *every* refresh error. Only a refresh the authorization
+> server rejects (`*socrate.OAuthError` with `invalid_grant`,
+> `invalid_client`, `unauthorized_client` or `invalid_scope`) tears the
+> session down with 401; a transport error, timeout or 5xx now answers
+> **502** and keeps the session. Consumers with their own `EnsureFresh`
+> call sites (e.g. `/bff/elevate`) should switch to `IsFatalRefreshError`
+> for the same decision.
+
+### Fixed
+
+- **bff: refreshed tokens are written through to the `SessionStore`
+  (P3-10).** `ProxyWithSession` mutated the in-memory `*Session` after a
+  refresh and after `Touch` but never called `Store.Put`, which is invisible
+  with `MemoryStore` (it hands out the live pointer) and fatal for a durable
+  store that rehydrates a fresh `Session` per `Get`: the rotated refresh
+  token was lost, the next request re-used the spent one and the session died
+  at its first access-token expiry; idle-expiry never slid on real traffic.
+  `EnsureFresh` now `Put`s inside the coalesced refresh (written once), and
+  `ProxyWithSession` persists `Touch` at most once per `TouchInterval`
+  (default 1 min; negative = every request). New `Session.LastSeen()`.
+
+- **bff: the coalesced refresh no longer runs under the first caller's
+  request context (P3-11).** Binding the shared refresh to whichever request
+  arrived first meant a browser aborting that one request (tab close,
+  navigation, `EventSource` teardown) failed the refresh for every coalesced
+  waiter and logged all of them out. The refresh now runs under
+  `context.WithoutCancel(ctx)` bounded by `RefreshTimeout` (default 10s);
+  context values (tracing) are preserved.
+
+### Added
+
+- **socrate: typed `*OAuthError` from the token endpoint** (`StatusCode`,
+  RFC 6749 `Code`, `Description`), returned by `ExchangeCode` /
+  `RefreshToken` instead of an opaque string. Message text is unchanged.
+- **bff: `IsFatalRefreshError(err)`** — the single decision point for
+  "session is dead" vs "token endpoint is unreachable".
+- **bff: `LoginBinding`** (P3-15) — issues a nonce in a short-lived
+  HttpOnly, SameSite=Lax (`__Host-` when Secure) cookie at `/login` and
+  requires it back at `/callback`, so only the browser that started a login
+  can finish it. Closes the login-CSRF / silent account-swap both consoles
+  currently have (state was validated server-side only).
+- **bff: `Session.String()` / `GoString()`** redact tokens and the CSRF
+  secret so `%v`/`%+v`/`%#v` cannot leak them into logs (P3-14).
+
+### Security
+
+- **bff: `NewSingleHostProxy` strips client-supplied IP-attribution headers**
+  (`X-Real-IP`, `True-Client-IP`, `Forwarded`) in its `Director` (P3-16), so a
+  browser cannot choose the address the upstream rate-limits, blocks or
+  audits it as. `X-Forwarded-For` is left to the edge proxy, which replaces
+  client-supplied values for untrusted peers. Consumers that wrap `Director`
+  keep the behaviour by calling the original first (as both consoles do).
+- **socrate: query-string values are now `url.Values`-encoded** in
+  `GetGeoAnalytics`, `GetTokenStats` and `StreamSecurityEvents` (P2-10); a
+  caller-supplied `period` of `24h&period=9999d` could previously inject or
+  override parameters, and a `#` silently truncated the query.
+
+- **Build with a patched Go toolchain (`go1.26.6`) and `golang.org/x/text`
+  `v0.39.0`.** Clears the `govulncheck` findings that appeared since the last
+  release: GO-2026-6218 (`net/url`), GO-2026-6090 / GO-2026-5856
+  (`crypto/tls`), GO-2026-5972 (`encoding/asn1`), GO-2026-5026 (`net/http`
+  idna) and GO-2026-5970 (`x/text`). No library code changed. As before, the
+  `go` directive stays at `1.25.0`; the `toolchain` directive applies only
+  when backendkit is the main module, so consumers on Go 1.25 are unaffected.
+
+### Notes
+
+- `Gateway` embeds a `singleflight.Group` since 1.11.0 and must be used by
+  pointer and never copied (`go vet` copylocks reports it); now documented
+  (P3-13).
+
 ## [1.11.1] - 2026-07-03
 
 ### Fixed
