@@ -33,6 +33,25 @@ var ErrMagicLinkInvalid = errors.New("magic link invalid or expired")
 // ErrInvalidCredentials is returned by AdminLogin on HTTP 401.
 var ErrInvalidCredentials = errors.New("invalid credentials")
 
+// OAuthError is a non-2xx response from the /oauth/token endpoint. Code and
+// Description carry the RFC 6749 §5.2 {"error","error_description"} body when
+// the server sent one (Code is empty otherwise). Callers use errors.As to
+// distinguish a rejected grant (e.g. Code == "invalid_grant": the refresh
+// token is spent, expired or revoked — the session is dead) from a transient
+// failure (transport error, 5xx: retry, keep the session).
+type OAuthError struct {
+	StatusCode  int
+	Code        string
+	Description string
+}
+
+func (e *OAuthError) Error() string {
+	if e.Code != "" {
+		return fmt.Sprintf("token endpoint: %s: %s", e.Code, e.Description)
+	}
+	return fmt.Sprintf("token endpoint HTTP %d: %s", e.StatusCode, e.Description)
+}
+
 // TokenSet is the response of the /oauth/token endpoint (authorization_code and
 // refresh_token grants). RefreshToken and IDToken are present depending on the
 // granted scopes and flow.
@@ -71,22 +90,26 @@ func (c *Client) postForm(ctx context.Context, fullURL string, data url.Values) 
 	return c.httpClient.Do(req)
 }
 
-// decodeTokenSet decodes a /oauth/token response, surfacing the RFC 6749
-// {"error","error_description"} body on failure.
+// decodeTokenSet decodes a /oauth/token response, surfacing a non-2xx status
+// as a typed *OAuthError carrying the RFC 6749 {"error","error_description"}
+// body when present.
 func decodeTokenSet(resp *http.Response) (*TokenSet, error) {
 	b, err := readBody(resp)
 	if err != nil {
 		return nil, fmt.Errorf("read token response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		var oe struct {
+		var body struct {
 			Error            string `json:"error"`
 			ErrorDescription string `json:"error_description"`
 		}
-		if json.Unmarshal(b, &oe) == nil && oe.Error != "" {
-			return nil, fmt.Errorf("token endpoint: %s: %s", oe.Error, oe.ErrorDescription)
+		oe := &OAuthError{StatusCode: resp.StatusCode}
+		if json.Unmarshal(b, &body) == nil && body.Error != "" {
+			oe.Code, oe.Description = body.Error, body.ErrorDescription
+		} else {
+			oe.Description = string(b)
 		}
-		return nil, fmt.Errorf("token endpoint HTTP %d: %s", resp.StatusCode, b)
+		return nil, oe
 	}
 	var ts TokenSet
 	if err := json.Unmarshal(b, &ts); err != nil {

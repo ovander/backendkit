@@ -165,7 +165,7 @@ type GeoAnalytics struct {
 func (c *Client) GetGeoAnalytics(ctx context.Context, period string) (*GeoAnalytics, error) {
 	path := "/api/admin/security/geo"
 	if period != "" {
-		path += "?period=" + period
+		path += "?" + url.Values{"period": {period}}.Encode()
 	}
 	resp, err := c.doWithJWT(ctx, http.MethodGet, c.adminURL(path), nil)
 	if err != nil {
@@ -223,7 +223,7 @@ type TokenStats struct {
 func (c *Client) GetTokenStats(ctx context.Context, period string) (*TokenStats, error) {
 	path := "/api/admin/tokens/stats"
 	if period != "" {
-		path += "?period=" + period
+		path += "?" + url.Values{"period": {period}}.Encode()
 	}
 	resp, err := c.doWithJWT(ctx, http.MethodGet, c.adminURL(path), nil)
 	if err != nil {
@@ -261,18 +261,18 @@ type StreamEventOptions struct {
 // admin JWT. Heartbeat frames are delivered with Name == "heartbeat".
 func (c *Client) StreamSecurityEvents(ctx context.Context, opts StreamEventOptions, handler func(StreamEvent) error) error {
 	path := "/api/admin/events/stream"
-	q := make([]string, 0, 3)
+	q := url.Values{}
 	if opts.Severity != "" {
-		q = append(q, "severity="+opts.Severity)
+		q.Set("severity", opts.Severity)
 	}
 	if opts.EventType != "" {
-		q = append(q, "event_type="+opts.EventType)
+		q.Set("event_type", opts.EventType)
 	}
 	if opts.LastEventID != "" {
-		q = append(q, "last_event_id="+opts.LastEventID)
+		q.Set("last_event_id", opts.LastEventID)
 	}
 	if len(q) > 0 {
-		path += "?" + strings.Join(q, "&")
+		path += "?" + q.Encode()
 	}
 
 	resp, err := c.doWithJWT(ctx, http.MethodGet, c.adminURL(path), nil)

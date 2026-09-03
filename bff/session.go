@@ -87,6 +87,25 @@ func (s *Session) Touch(now time.Time) {
 	s.mu.Unlock()
 }
 
+// LastSeen returns the idle timestamp last recorded by Touch.
+func (s *Session) LastSeen() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastSeen
+}
+
+// String renders the session without any of its secrets, so a stray
+// log.Printf("%v", s) / %+v cannot leak tokens or the CSRF secret (fmt
+// otherwise reflects into unexported fields).
+func (s *Session) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return "bff.Session{id=" + s.id + " sub=" + s.user.Sub + " accessExpiry=" + s.accessExpiry.UTC().Format(time.RFC3339) + "}"
+}
+
+// GoString mirrors String for %#v.
+func (s *Session) GoString() string { return s.String() }
+
 // AccessValid reports whether the access token is still valid at now, keeping
 // leeway seconds of head-room so a proactive refresh happens before expiry.
 func (s *Session) AccessValid(now time.Time, leeway time.Duration) bool {

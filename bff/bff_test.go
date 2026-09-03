@@ -3,7 +3,6 @@ package bff
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -450,10 +449,14 @@ func TestEnsureFreshRefreshesWithinLeewayButNotYetExpired(t *testing.T) {
 	}
 }
 
+// TestProxyRefreshFailureClearsSession: a refresh that the authorization
+// server REJECTS (invalid_grant — the refresh token is spent/expired/revoked)
+// tears the session down. A transient failure does not; see
+// TestProxyTransientRefreshErrorKeepsSession.
 func TestProxyRefreshFailureClearsSession(t *testing.T) {
 	uu, _ := url.Parse("http://upstream.invalid")
 	store := NewMemoryStore(time.Hour, time.Hour)
-	g := newTestGateway(uu, store, &fakeRefresher{err: errors.New("refresh boom")})
+	g := newTestGateway(uu, store, &fakeRefresher{err: &socrate.OAuthError{StatusCode: 400, Code: "invalid_grant", Description: "refresh boom"}})
 	h := g.ProxyWithSession(NewSingleHostProxy(uu))
 
 	store.Put(NewSession("sid", "csrf", tokenSet("expired", "rt", 0), UserInfo{}, time.Now().Add(-time.Minute)))
