@@ -6,6 +6,17 @@ All notable changes to backendkit are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **`httpware.Metrics(service)` / `httpware.MetricsHandler()`** — Prometheus
+  RED instrumentation for backendkit-based services (Socrate suite plan B1):
+  `backendkit_http_requests_total{service,route,method,status}` and
+  `backendkit_http_request_duration_seconds{service,route,method}`, keyed by
+  the Go 1.22 `ServeMux` route pattern (never the raw path); `Flush` is
+  forwarded so SSE proxies keep streaming. New dependency:
+  `github.com/prometheus/client_golang`. Mount `MetricsHandler` on a loopback
+  or admin-only route only.
+
 ## [1.12.0] - 2026-09-03
 
 Shared-gateway hardening from the Socrate suite pass-3 audit
