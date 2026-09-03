@@ -136,7 +136,7 @@ func main() {
 |---------|---------|
 | [`apierror`](#apierror) | Structured HTTP error types (`AppError`, constructor functions) |
 | [`ctxutil`](#ctxutil) | Typed context keys for Socrate claims (tenant, user, role, plan, logger, request-id) |
-| [`httpware`](#httpware) | Chi-compatible middlewares: RequestID, Logger, SecurityHeaders, BodyLimit, Recover, Timeout, RateLimiter, RequireTenant, RBAC |
+| [`httpware`](#httpware) | Chi-compatible middlewares: RequestID, Logger, SecurityHeaders, BodyLimit, Recover, Timeout, RateLimiter, RequireTenant, RBAC, Metrics (Prometheus RED) |
 | [`gormlogger`](#gormlogger) | GORM → logrus bridge with slow-query detection |
 | [`jwtauth`](#jwtauth) | JWT RS256 validation middleware with JWKS cache and stale-key fallback |
 | [`socrate`](#socrate) | Full Socrate API client: user CRUD, service-account token, magic links, invite, app & superadmin management, security monitoring, dashboard, audit logs, token introspection/revocation |
@@ -156,6 +156,7 @@ Every package is independent — `go get` pulls the whole module, but importing 
 | Read the tenant / user / role / plan of the current request | [`ctxutil`](#ctxutil) |
 | Add request IDs, structured logging, panic recovery, timeouts, body limits, security headers | [`httpware`](#httpware) |
 | Rate-limit per tenant | [`httpware.RateLimiter`](#httpware) |
+| Expose Prometheus RED metrics keyed by route pattern (same dashboard as Socrate) | [`httpware.Metrics`](#httpware) + `httpware.MetricsHandler` |
 | Guarantee a tenant on tenant-scoped routes | [`httpware.RequireTenant`](#httpware) |
 | Gate routes by role/permission | [`httpware.RBAC`](#httpware) |
 | Gate routes or features by commercial plan | [`tiering`](#tiering) |
