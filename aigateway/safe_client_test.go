@@ -290,8 +290,12 @@ func TestNewAIClient_ReturnsAIClient(t *testing.T) {
 		EnableTranslation: true,
 	}
 	client := aigateway.NewAIClient(cfg, nil)
-	// client must satisfy AIClient (compile-time assertion via assignment).
-	var _ aigateway.AIClient = client
+	// NewAIClient already returns AIClient, so the interface is satisfied at
+	// compile time and an assignment asserts nothing. Assert the part that can
+	// actually fail: that a usable client came back.
+	if client == nil {
+		t.Fatal("NewAIClient returned nil")
+	}
 }
 
 // TestNewAIClient_OllamaProvider creates an Ollama-backed client and makes a
