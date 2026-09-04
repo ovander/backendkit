@@ -64,7 +64,9 @@ func New(caller RawCaller, cfg AIConfig, reporter EventReporter, log *logrus.Ent
 //  5. Retry once with a reinforced prompt (if MaxRetries > 0).
 //     → OK  : return (RetryCount=1, Valid=true).
 //     → FAIL: log + Sentry event; continue to step 6.
-//  6. Translate fallback (if EnableTranslation).
+//  6. Translate fallback (if EnableTranslation). The translated text is
+//     validated too, so "OK" means it actually came back in the target
+//     language, not merely that the call returned something.
 //     → OK  : return (Valid=true, RetryCount preserved).
 //     → FAIL: return (Valid=false) — caller must decide how to surface this.
 func (g *LanguageGuard) Generate(ctx context.Context, input PromptInput) (AIResponse, error) {
@@ -126,7 +128,14 @@ func (g *LanguageGuard) Generate(ctx context.Context, input PromptInput) (AIResp
 	// ── Step 3b: translation fallback ───────────────────────────────────────
 	if g.cfg.EnableTranslation {
 		translated, tErr := g.translator.Translate(ctx, raw, input.Locale)
-		if tErr == nil && translated != "" {
+		translated = strings.TrimSpace(translated)
+		// The translation is a strategy like any other, so its output is held
+		// to the same standard: a call that merely succeeded is not evidence
+		// that the text came back in the target language. Note that Translate
+		// returns the ORIGINAL text alongside its error on failure, so without
+		// this check a translator that echoes the source would be accepted as
+		// a valid translation.
+		if tErr == nil && translated != "" && ValidateText(translated, input.Locale) {
 			resp.Text = translated
 			resp.Valid = true
 
