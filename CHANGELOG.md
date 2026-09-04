@@ -6,6 +6,12 @@ All notable changes to backendkit are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-09-04
+
+Observability slice from the Socrate suite plan (B1): the same RED metric
+names and label scheme that Socrate itself exposes, so every backendkit-based
+service lands on one dashboard. Purely additive.
+
 ### Added
 
 - **`httpware.Metrics(service)` / `httpware.MetricsHandler()`** — Prometheus
