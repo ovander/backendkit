@@ -33,6 +33,9 @@ build toolchain. Both purely additive for consumers.
 
 ### Changed
 
+- **Build toolchain: Go 1.26.8 → Go 1.27.1** (`toolchain` directive and CI).
+  The `go 1.25.0` minimum is unchanged: consumers are unaffected, and the
+  GODEBUG defaults this module's own tests run with stay those of Go 1.25.
 - **Build toolchain: Go 1.26.6 → Go 1.26.8** (`toolchain` directive and CI),
   picking up the 2026-08-28 security release. The `go 1.25.0` language minimum
   is unchanged, so consumers are unaffected. CI now fails if its Go and the
