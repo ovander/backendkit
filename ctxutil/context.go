@@ -36,6 +36,8 @@ const (
 	loggerKey       contextKey = "logger"
 	requestIDKey    contextKey = "request_id"
 	rawJWTKey       contextKey = "raw_jwt"
+	authTimeKey     contextKey = "auth_time"
+	amrKey          contextKey = "amr"
 )
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -181,6 +183,35 @@ func GetTokenVersion(ctx context.Context) int {
 		return v
 	}
 	return 0
+}
+
+// WithAuthTime stores the auth_time claim — when the user last authenticated
+// interactively, as unix seconds. Set by jwtauth.Middleware when present.
+func WithAuthTime(ctx context.Context, unix int64) context.Context {
+	return context.WithValue(ctx, authTimeKey, unix)
+}
+
+// GetAuthTime returns the auth_time claim. Returns 0 when absent — callers
+// must treat 0 as "unknown", never as "long ago" or "just now".
+func GetAuthTime(ctx context.Context) int64 {
+	if v, ok := ctx.Value(authTimeKey).(int64); ok {
+		return v
+	}
+	return 0
+}
+
+// WithAMR stores the amr claim (RFC 8176 authentication methods, e.g. "pwd",
+// "otp", "mfa"). Set by jwtauth.Middleware when present.
+func WithAMR(ctx context.Context, amr []string) context.Context {
+	return context.WithValue(ctx, amrKey, amr)
+}
+
+// GetAMR returns the amr claim, or nil when absent.
+func GetAMR(ctx context.Context) []string {
+	if v, ok := ctx.Value(amrKey).([]string); ok {
+		return v
+	}
+	return nil
 }
 
 // ─── JWT ──────────────────────────────────────────────────────────────────────

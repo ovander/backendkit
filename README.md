@@ -19,7 +19,7 @@ Shared Go library for backend services that use [Socrate](https://github.com/ova
 - [Architecture overview](#architecture-overview)
 - [Full integration example](#full-integration-example)
 - [Package reference](#package-reference)
-  — [apierror](#apierror) · [ctxutil](#ctxutil) · [httpware](#httpware) · [gormlogger](#gormlogger) · [socrate](#socrate) · [jwtauth](#jwtauth) · [tiering](#tiering) · [aigateway](#aigateway) · [ainarration](#ainarration) · [pagination](#pagination) · [buildinfo](#buildinfo)
+  — [apierror](#apierror) · [ctxutil](#ctxutil) · [httpware](#httpware) · [gormlogger](#gormlogger) · [socrate](#socrate) · [jwtauth](#jwtauth) · [tiering](#tiering) · [pep](#pep) · [aigateway](#aigateway) · [ainarration](#ainarration) · [pagination](#pagination) · [buildinfo](#buildinfo)
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
 - [Production usage](#production-usage)
@@ -143,12 +143,13 @@ func main() {
 | [`jwtauth`](#jwtauth) | JWT RS256 validation middleware with JWKS cache and stale-key fallback |
 | [`socrate`](#socrate) | Full Socrate API client: user CRUD, service-account token, magic links, invite, app & superadmin management, security monitoring, dashboard, audit logs, token introspection/revocation |
 | [`tiering`](#tiering) | Plan registry, tier gate middleware, feature policy model and service |
+| [`pep`](#pep) | Policy enforcement point: asks Socrate's policy decision point about each action and honours the central `POLICY_MODE` (off / shadow / enforce) and obligations |
 | [`aigateway`](#aigateway) | Multi-provider AI client (OpenAI + Claude), `ExtractJSON`/`ExtractJSONInto` |
 | [`ainarration`](#ainarration) | Generic LRU+TTL narration cache and `CacheKey` helper |
 | [`pagination`](#pagination) | Query-param parsing and `PagedResponse` |
 | [`buildinfo`](#buildinfo) | Build-time version metadata (`-ldflags`) and a `/version` HTTP handler |
 
-Every package is independent — `go get` pulls the whole module, but importing one package never drags in another (the only internal dependencies are the shared `ctxutil` and `apierror` primitives).
+Packages are independent — `go get` pulls the whole module, but importing one package drags in only what it builds on: the shared `ctxutil` and `apierror` primitives, plus `socrate` for the two packages that exist to talk to Socrate (`bff`, `pep`) and `ailang` for `aigateway`.
 
 ### Which package do I need?
 
@@ -162,6 +163,7 @@ Every package is independent — `go get` pulls the whole module, but importing 
 | Guarantee a tenant on tenant-scoped routes | [`httpware.RequireTenant`](#httpware) |
 | Gate routes by role/permission | [`httpware.RBAC`](#httpware) |
 | Gate routes or features by commercial plan | [`tiering`](#tiering) |
+| Authorise actions with Socrate's central, declarative policy (RBAC + ABAC, object-level) | [`pep`](#pep) |
 | Return consistent JSON errors | [`apierror`](#apierror) |
 | Call Socrate to manage users, apps, tokens, or security | [`socrate`](#socrate) |
 | Call OpenAI or Claude through one interface | [`aigateway`](#aigateway) |
@@ -557,6 +559,75 @@ auth := jwtauth.New(jwksURL, issuer, logger,
 ```
 
 The check is opt-in: with none configured, behaviour is unchanged.
+
+**Authentication facts.** `auth_time` and `amr` (when and how the user
+authenticated) are exposed as `ctxutil.GetAuthTime` / `ctxutil.GetAMR` —
+zero / nil when the token does not carry them. They are what a step-up or MFA
+check needs; `pep` uses them to honour policy obligations.
+
+---
+
+### pep
+
+The policy enforcement point for Socrate's policy decision point (Socrate A4).
+Rules live in Socrate — RBAC over roles, ABAC over user attributes, resource
+attributes and request context — and every application asks the same PDP:
+
+```go
+client, _ := socrate.NewClient(socrate.ClientConfig{ /* BaseURL, ClientID, ClientSecret, AppID */ })
+enf, _ := pep.New(pep.Config{Decider: client, Logger: logger})
+
+r.Use(auth.Handler) // jwtauth first: the user's own token is the decision's subject
+
+// Route-level: one decision before the handler.
+r.With(enf.Middleware(func(r *http.Request) (string, socrate.PolicyResource, bool) {
+    return "invoice.read", socrate.PolicyResource{Type: "invoice"}, true
+})).Get("/invoices", listInvoices)
+
+// Object-level: once the resource is loaded.
+func approve(w http.ResponseWriter, r *http.Request) {
+    inv := load(r)
+    err := enf.Check(r.Context(), "invoice.approve", socrate.PolicyResource{
+        Type: "invoice", ID: inv.ID,
+        Attributes: map[string]any{"amount": inv.Amount, "owner_id": inv.OwnerID},
+    }, pep.ContextFor(r))
+    if pep.WriteDenial(w, err) {
+        return
+    }
+    // …
+}
+```
+
+**Who decides what.** Socrate resolves the user — role, attributes, role in
+*this* application, and from the token how and when they authenticated — so
+nothing about the user is taken on the application's word. The application
+supplies the action, the resource and the request context.
+
+**The mode comes from Socrate** with every decision, so one switch there
+(`POLICY_MODE`) moves every application at once, with no redeploy:
+
+| Mode | A denial… |
+|---|---|
+| `off` | is ignored |
+| `shadow` | is logged (`pep: policy would deny`) and the request proceeds |
+| `enforce` | is refused: `403 {"error": "policy_denied"}` |
+
+An allow can carry **obligations**, honoured here against the verified token:
+`require_fresh_auth` (within `FreshAuthMaxAge`, default 5 min) →
+`403 elevation_required`; `require_mfa` (`amr` contains `mfa`) →
+`403 mfa_required`. An obligation this version does not know is treated as
+unmet, never dropped.
+
+**When Socrate cannot be reached** the last mode seen decides: proceed in
+`off`/`shadow` (a shadow rollout can never take the application down), refuse
+`503 policy_unavailable` in `enforce`. Before any decision has told the process
+the mode it refuses too, unless `FailOpenWhenModeUnknown` is set.
+
+`ContextFor` sends the request's peer address as `context.ip`: behind a proxy,
+resolve `RemoteAddr` with a trusted real-IP middleware first — a spoofable
+`X-Forwarded-For` must never reach a policy. `CheckAsApp` decides for the
+application itself (no user), e.g. in a background job. `OnDecision` is a hook
+for metrics.
 
 ---
 

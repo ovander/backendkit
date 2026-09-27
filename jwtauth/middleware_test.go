@@ -384,3 +384,35 @@ func TestHandler_RejectsUndersizedRSAKey(t *testing.T) {
 		t.Errorf("expected 401 for a token signed with a 1024-bit key, got %d", code)
 	}
 }
+
+// auth_time and amr are what step-up and MFA checks (and pep obligations) need,
+// so they must reach the context — and stay absent, not zero-valued lies,
+// when the token does not carry them.
+func TestHandler_PropagatesAuthTimeAndAMR(t *testing.T) {
+	key := generateTestKey(t)
+	srv := jwksServer(t, "k1", key)
+	defer srv.Close()
+	m := jwtauth.New(srv.URL, "", testLogger())
+
+	capture := func(claims jwtauth.SocrateClaims) (int64, []string) {
+		var authTime int64
+		var amr []string
+		h := m.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authTime, amr = ctxutil.GetAuthTime(r.Context()), ctxutil.GetAMR(r.Context())
+		}))
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.Header.Set("Authorization", "Bearer "+signToken(t, key, "k1", claims))
+		h.ServeHTTP(httptest.NewRecorder(), r)
+		return authTime, amr
+	}
+	base := jwt.RegisteredClaims{Subject: "42", ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))}
+
+	at, amr := capture(jwtauth.SocrateClaims{AuthTime: 1700000000, Amr: []string{"pwd", "mfa"}, RegisteredClaims: base})
+	if at != 1700000000 || len(amr) != 2 || amr[1] != "mfa" {
+		t.Fatalf("auth_time=%d amr=%v", at, amr)
+	}
+	at, amr = capture(jwtauth.SocrateClaims{RegisteredClaims: base})
+	if at != 0 || amr != nil {
+		t.Fatalf("absent claims came back as auth_time=%d amr=%v", at, amr)
+	}
+}
