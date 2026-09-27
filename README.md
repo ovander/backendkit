@@ -45,7 +45,7 @@ backendkit packages that foundation into a single, versioned dependency so every
 ## Requirements
 
 - **Go 1.25** or later to import the module. For building/releasing backendkit
-  itself, use **Go 1.26.8** (pinned via the `toolchain` directive in `go.mod`,
+  itself, use **Go 1.27.1** (pinned via the `toolchain` directive in `go.mod`,
   and checked against CI's Go on every run) so the binary picks up the latest Go
   standard-library security fixes; run `govulncheck ./...` to verify. Go 1.25
   itself is out of support since Go 1.27's release — consumers should build with

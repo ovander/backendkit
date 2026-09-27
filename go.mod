@@ -7,7 +7,7 @@ go 1.25.0
 // The go directive above stays at 1.25.0 so the module remains importable by
 // consumers on Go 1.25; this toolchain directive only governs builds where
 // backendkit is the main module. Keep it equal to the Go version in CI.
-toolchain go1.26.8
+toolchain go1.27.1
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
