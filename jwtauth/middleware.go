@@ -50,6 +50,11 @@ type SocrateClaims struct {
 	Role         string            `json:"role,omitempty"`
 	AppRoles     map[string]string `json:"app_roles,omitempty"`
 	TokenVersion int               `json:"token_version,omitempty"`
+	// AuthTime and Amr say when and how the user authenticated (RFC 9068 /
+	// OIDC auth_time, RFC 8176 amr). They are what a step-up or MFA check —
+	// including a policy obligation (pep) — needs to look at.
+	AuthTime int64    `json:"auth_time,omitempty"`
+	Amr      []string `json:"amr,omitempty"`
 
 	// Custom claims — require server-side configuration to be populated.
 	TenantID string `json:"tenant_id,omitempty"`
@@ -297,6 +302,12 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 		}
 		if claims.TokenVersion != 0 {
 			ctx = ctxutil.WithTokenVersion(ctx, claims.TokenVersion)
+		}
+		if claims.AuthTime != 0 {
+			ctx = ctxutil.WithAuthTime(ctx, claims.AuthTime)
+		}
+		if claims.Amr != nil {
+			ctx = ctxutil.WithAMR(ctx, claims.Amr)
 		}
 
 		// Store raw JWT so downstream clients (e.g. socrate.Client) can forward

@@ -6,6 +6,30 @@ All notable changes to backendkit are documented here. The format is based on
 
 ## [Unreleased]
 
+Policy enforcement for applications (Socrate plan A4, part 2). Purely additive.
+
+### Added
+
+- **`pep` package** — the policy enforcement point for Socrate's policy
+  decision point. `Enforcer.Middleware` gates a route on an action,
+  `Enforcer.Check` decides object-level inside a handler, `WriteDenial` writes
+  the refusal. The user's own access token is sent as the decision's subject
+  (so Socrate, not the application, resolves who the user is), and the mode
+  Socrate reports with every answer decides what happens: `off` ignore,
+  `shadow` log a would-deny and proceed, `enforce` refuse with `403
+  policy_denied`. Obligations are honoured against the verified token
+  (`require_fresh_auth` → `elevation_required`, `require_mfa` →
+  `mfa_required`; unknown obligations count as unmet). When Socrate is
+  unreachable the last mode seen applies — proceed in off/shadow, refuse `503
+  policy_unavailable` in enforce, refuse before any decision unless
+  `FailOpenWhenModeUnknown`. No subject token (pep mounted before jwtauth) is
+  `401`, never a decision made as the application.
+- **`socrate.Client.Decide`** — `POST /api/apps/{id}/service/policy/decide`
+  with the cached service token, forwarding the request id as
+  `X-Correlation-ID`; `ErrPolicyUnavailable` on 503 with the mode preserved.
+- **`jwtauth` exposes `auth_time` and `amr`** (`SocrateClaims.AuthTime`,
+  `SocrateClaims.Amr`), as `ctxutil.GetAuthTime` / `ctxutil.GetAMR`.
+
 ## [1.13.0] - 2026-09-04
 
 Observability slice from the Socrate suite plan (B1): the same RED metric
