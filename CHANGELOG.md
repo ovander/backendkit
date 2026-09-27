@@ -6,6 +6,13 @@ All notable changes to backendkit are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Build toolchain: Go 1.26.6 → Go 1.26.8** (`toolchain` directive and CI),
+  picking up the 2026-08-28 security release. The `go 1.25.0` language minimum
+  is unchanged, so consumers are unaffected. CI now fails if its Go and the
+  `toolchain` line drift apart.
+
 ## [1.13.0] - 2026-09-04
 
 Observability slice from the Socrate suite plan (B1): the same RED metric

@@ -3,10 +3,11 @@ module github.com/ovander/backendkit
 go 1.25.0
 
 // Build/release with a patched toolchain to pick up Go standard-library security
-// fixes (govulncheck GO-2026-4599…GO-2026-5039). The go directive above stays at
-// 1.25.0 so the module remains importable by consumers on Go 1.25; this toolchain
-// directive only governs builds where backendkit is the main module.
-toolchain go1.26.6
+// fixes (govulncheck GO-2026-4599…GO-2026-5039, and the 2026-08-28 releases).
+// The go directive above stays at 1.25.0 so the module remains importable by
+// consumers on Go 1.25; this toolchain directive only governs builds where
+// backendkit is the main module. Keep it equal to the Go version in CI.
+toolchain go1.26.8
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
