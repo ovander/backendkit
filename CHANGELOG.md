@@ -12,6 +12,9 @@ All notable changes to backendkit are documented here. The format is based on
   picking up the 2026-08-28 security release. The `go 1.25.0` language minimum
   is unchanged, so consumers are unaffected. CI now fails if its Go and the
   `toolchain` line drift apart.
+- **golangci-lint v2.5.0 → v2.14.0** in CI (still built with the job's
+  toolchain). v2.5.0 cannot load Go 1.27's export data; v2.14.0 reports no
+  issues on this module.
 
 ## [1.13.0] - 2026-09-04
 

@@ -56,7 +56,7 @@ jobs:
           cache: true
       - uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.5.0
+          version: v2.14.0
           # Build golangci-lint with the job's Go toolchain (1.26.8). The prebuilt
           # release binaries are compiled with an older Go and refuse to lint a
           # module whose toolchain directive targets a newer Go ("the Go language
