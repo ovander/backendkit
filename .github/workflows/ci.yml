@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go-version: ["1.26.6"]
+        go-version: ["1.26.8"]
 
     steps:
       - uses: actions/checkout@v4
@@ -21,6 +21,15 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
           cache: true
+
+      # go.mod's toolchain line and this workflow's Go version must agree:
+      # fail loudly if they drift rather than test on one Go and pin another.
+      - name: Toolchain matches go.mod
+        run: |
+          want=$(awk '/^toolchain /{print $2}' go.mod)
+          got=$(go env GOVERSION)
+          echo "go.mod toolchain: $want · CI: $got"
+          test -n "$want" && test "$got" = "$want"
 
       - name: Verify go.sum is up to date
         run: |
@@ -43,12 +52,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26.6"
+          go-version: "1.26.8"
           cache: true
       - uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.5.0
-          # Build golangci-lint with the job's Go toolchain (1.26.6). The prebuilt
+          version: v2.14.0
+          # Build golangci-lint with the job's Go toolchain (1.26.8). The prebuilt
           # release binaries are compiled with an older Go and refuse to lint a
           # module whose toolchain directive targets a newer Go ("the Go language
           # version used to build golangci-lint is lower than the targeted Go
@@ -67,7 +76,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26.6"
+          go-version: "1.26.8"
           cache: true
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
