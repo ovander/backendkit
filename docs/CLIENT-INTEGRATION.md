@@ -1,21 +1,22 @@
 # Socrate + backendkit — Client Integration Guide
 
-A practical, end-to-end guide for **application teams** integrating with the
-[Socrate](https://github.com/ovander/go-oauth2) OAuth 2.0 / OpenID Connect server
-through the `backendkit` library.
+A practical, end-to-end guide for **application teams** integrating with Socrate, the suite's
+OAuth 2.1 / OpenID Connect server (`ovander/go-oauth2`, not public yet), through the
+`backendkit` library.
 
 It is written for two audiences working on the same product:
 
 - **Backend engineers** building a Go service that trusts Socrate-issued JWTs
-  and needs to manage users, profiles and security data.
-- **Frontend engineers** (SPA / mobile / native) driving the login flow and
-  calling that backend.
+  and needs to manage users, profiles and security data, or a
+  Backend-for-Frontend (BFF) that signs browser users in.
+- **Frontend engineers** driving the login flow and calling that backend:
+  browser apps through a BFF, mobile, native and CLI clients with their own
+  tokens.
 
 > **Reference vs. guide.** This document is the *client-side* integration
-> guide. The authoritative description of every raw HTTP endpoint lives in the
-> server repo at [`go-oauth2/docs/API.md`](https://github.com/ovander/go-oauth2/blob/main/docs/API.md).
-> When the two disagree, the server doc wins. This guide tells you how to wire
-> things up; that doc tells you exactly what each endpoint returns.
+> guide: it tells you how to wire things up. The raw HTTP endpoints are
+> described in the Socrate server repository, which is not public yet; when
+> this guide and the server disagree, the server wins.
 
 ---
 
@@ -32,15 +33,18 @@ It is written for two audiences working on the same product:
   - [6.3 Dual-port routing](#63-dual-port-routing)
   - [6.4 Method reference](#64-method-reference)
 - [7. Frontend: driving the login flow](#7-frontend-driving-the-login-flow)
-  - [7.1 Authorization Code + PKCE (recommended)](#71-authorization-code--pkce-recommended)
-  - [7.2 Direct JSON login (first-party only)](#72-direct-json-login-first-party-only)
-  - [7.3 Magic link (passwordless)](#73-magic-link-passwordless)
-  - [7.4 Calling your backend](#74-calling-your-backend)
+  - [7.1 Browser apps: use a Backend-for-Frontend (bff)](#71-browser-apps-use-a-backend-for-frontend-bff)
+  - [7.2 Alternative: clients that hold their own tokens](#72-alternative-clients-that-hold-their-own-tokens)
+  - [7.3 Authorization Code + PKCE in the client](#73-authorization-code--pkce-in-the-client)
+  - [7.4 Direct JSON login (first-party only)](#74-direct-json-login-first-party-only)
+  - [7.5 Magic link (passwordless)](#75-magic-link-passwordless)
+  - [7.6 Calling your backend with a bearer token](#76-calling-your-backend-with-a-bearer-token)
 - [8. Error handling](#8-error-handling)
 - [9. Role & plan gating](#9-role--plan-gating)
-- [10. Recipes](#10-recipes)
-- [11. Quick reference](#11-quick-reference)
-- [12. Gotchas & FAQ](#12-gotchas--faq)
+- [10. Enforcing central policy decisions (pep)](#10-enforcing-central-policy-decisions-pep)
+- [11. Recipes](#11-recipes)
+- [12. Quick reference](#12-quick-reference)
+- [13. Gotchas & FAQ](#13-gotchas--faq)
 
 ---
 
@@ -52,35 +56,44 @@ surface for managing all of that.
 
 Your application is split into a **frontend** and a **backend**:
 
-- The **frontend** never validates tokens. It obtains them from Socrate (via the
-  Authorization Code flow, direct login, or magic link) and sends them as
-  `Authorization: Bearer <token>` to your backend.
+- The **frontend** never validates tokens. A **browser app** should never hold
+  them either: it signs in through a Backend-for-Frontend (BFF) and gets only an
+  opaque session cookie (§7.1). A **mobile, native or CLI client** obtains tokens
+  from Socrate (Authorization Code + PKCE, direct login, or magic link) and sends
+  them as `Authorization: Bearer <token>` to your backend (§7.2).
+- The **BFF** (`bff`) is a small server-side component, often part of your
+  backend, that runs the login with Socrate, keeps the tokens in a server-side
+  session, and forwards each browser request to your API with the bearer
+  attached.
 - The **backend** validates every incoming token against Socrate's public keys
-  (JWKS), reads the user's identity and role from the verified claims, and —
-  when it needs to act on Socrate (list users, invite a teammate, look up a
-  profile) — calls Socrate through the `socrate.Client`.
+  (JWKS), reads the user's identity and role from the verified claims, asks
+  Socrate's policy decision point when an action needs a central decision
+  (`pep`), and — when it needs to act on Socrate (list users, invite a teammate,
+  look up a profile) — calls Socrate through the `socrate.Client`.
 
-`backendkit` is the glue for the backend half: JWT validation
+`backendkit` is the glue for the server side: JWT validation
 (`jwtauth`), claim propagation (`ctxutil`), the typed Socrate API client
-(`socrate`), a middleware stack (`httpware`), structured errors (`apierror`),
-and plan-based feature gating (`tiering`).
+(`socrate`), the BFF runtime (`bff`), policy enforcement (`pep`), a middleware
+stack (`httpware`), structured errors (`apierror`), and plan-based feature
+gating (`tiering`).
 
 ```
-                         ┌────────────────────────────────────┐
-                         │              Socrate                │
-   login / tokens        │  :8080  OAuth/OIDC (public)         │
-  ┌────────────────────▶ │         /oauth/*  /.well-known/*    │
-  │                      │  :8081  Admin API (internal)        │
-  │                      │         /api/admin/*  /api/apps/*    │
-  │                      └────────────────────────────────────┘
-  │                            ▲                     ▲
-  │                            │ JWKS (validate)     │ socrate.Client
-  │                            │                     │ (JWT-forward + M2M)
-  │  Bearer JWT          ┌─────┴─────────────────────┴──────┐
-┌─┴────────────┐  API    │           Your backend (Go)       │
-│   Frontend   │ ──────▶ │  jwtauth → ctxutil → httpware →    │
-│ SPA / mobile │         │  your handlers → socrate.Client   │
-└──────────────┘         └───────────────────────────────────┘
+                       ┌─────────────────────────────────────────────────────┐
+                       │ Socrate                                             │
+                       │ OAuth/OIDC (public)    /oauth/*  /.well-known/*     │
+                       │ Admin API (internal)   /api/admin/*  /api/apps/*    │
+                       └───────┬─────────────────────────┬──────────────┬────┘
+                               │                         │              │
+                 code exchange │                    JWKS │              │ socrate.Client:
+                 and refresh   │                         │              │ JWT forward, M2M,
+                               │                         │              │ policy decisions
+┌──────────────┐  cookie  ┌────┴──────────┐  Bearer  ┌───┴──────────────┴───────────────┐
+│ Browser SPA  │ ───────▶ │ BFF (bff)     │ ───────▶ │ Your backend (Go)                │
+└──────────────┘          └───────────────┘          │ jwtauth → ctxutil → httpware →   │
+                                                     │ handlers → pep, socrate.Client   │
+┌──────────────┐              Bearer JWT             │                                  │
+│ Mobile / CLI │ ──────────────────────────────────▶ │                                  │
+└──────────────┘                                     └──────────────────────────────────┘
 ```
 
 ---
@@ -89,14 +102,18 @@ and plan-based feature gating (`tiering`).
 
 | Actor | Talks to | How | Auth |
 |-------|----------|-----|------|
-| Frontend | **Socrate :8080** | Authorization Code + PKCE, or `POST /api/auth/login` | none → receives tokens |
-| Frontend | **Your backend** | your REST API | `Bearer <access_token>` |
-| Your backend | **Socrate :8080** | `jwtauth` fetches JWKS; `socrate.Client` calls `/oauth/*` | JWKS is public; introspect/revoke use client creds |
-| Your backend | **Socrate :8081** | `socrate.Client` admin & app-user calls | forwards the user JWT **or** a service-account token |
+| Browser app | **Your BFF** (same origin) | your REST API, proxied | opaque `__Host-` session cookie + `X-CSRF-Token` on unsafe methods |
+| Your BFF | **Socrate OAuth port** | Authorization Code + PKCE, refresh (`socrate.Client`) | client ID + secret |
+| Your BFF | **Your backend** | proxied request (`bff.Gateway`) | `Bearer <access_token>` from the session |
+| Mobile / native / CLI client | **Socrate OAuth port** | Authorization Code + PKCE, or `POST /api/auth/login` | none → receives tokens |
+| Mobile / native / CLI client | **Your backend** | your REST API | `Bearer <access_token>` |
+| Your backend | **Socrate OAuth port** | `jwtauth` fetches JWKS; `socrate.Client` calls `/oauth/*` | JWKS is public; introspect/revoke use client creds |
+| Your backend | **Socrate admin API port** | `socrate.Client` admin, app-user and policy calls | forwards the user JWT **or** a service-account token |
 
-The **:8081 admin port is internal**. Your frontend must never reach it
-directly — all admin/app-user operations go *through your backend* via the
-`socrate.Client`, which lets you enforce your own authorization first.
+Socrate's **admin API port** (8081 in the default deployment) is internal.
+Your frontend must never reach it directly — all admin, app-user and policy
+operations go *through your backend* via the `socrate.Client`, which lets you
+enforce your own authorization first.
 
 ---
 
@@ -114,12 +131,12 @@ guide:
 
 | Variable | Consumed by | Purpose |
 |----------|-------------|---------|
-| `SOCRATE_JWKS_URL` | `jwtauth.New` | JWKS endpoint, e.g. `https://auth.example.com/.well-known/jwks.json` |
+| `SOCRATE_JWKS_URL` | `jwtauth.New` | JWKS endpoint, e.g. `https://socrate.example.com/.well-known/jwks.json` |
 | `SOCRATE_ISSUER` | `jwtauth.New` | Expected `iss` claim — optional but recommended in production |
-| `SOCRATE_BASE_URL` | `socrate.NewClient` | OAuth (public) port base URL, e.g. `https://auth.example.com` |
-| `SOCRATE_ADMIN_BASE_URL` | `socrate.NewClient` | Admin port base URL — derived from `BaseURL` (`:8081`) if omitted |
+| `SOCRATE_BASE_URL` | `socrate.NewClient` | OAuth (public) port base URL, e.g. `https://socrate.example.com` |
+| `SOCRATE_ADMIN_BASE_URL` | `socrate.NewClient` | Admin API base URL — optional; derived from `BaseURL` with port 8081 (the default deployment's admin port) if omitted |
 | `SOCRATE_CLIENT_ID` | `socrate.NewClient` | Your app's OAuth client ID |
-| `SOCRATE_CLIENT_SECRET` | `socrate.NewClient` | Client secret — required for service-account calls, `RevokeToken`, `IntrospectToken` |
+| `SOCRATE_CLIENT_SECRET` | `socrate.NewClient` | Client secret — required for service-account calls, `Decide`, `RevokeToken`, `IntrospectToken` and a BFF's token exchange |
 | `SOCRATE_APP_ID` | `socrate.NewClient` | Pre-resolved numeric app ID — **required** for every service-account method |
 
 > **Get these values** by registering your app in Socrate (Admin API
@@ -285,7 +302,7 @@ client, err := socrate.NewClient(socrate.ClientConfig{
 	ClientID:     os.Getenv("SOCRATE_CLIENT_ID"),      // required
 	ClientSecret: os.Getenv("SOCRATE_CLIENT_SECRET"),  // service-account / introspect / revoke
 	AppID:        os.Getenv("SOCRATE_APP_ID"),          // required for service-account calls
-	// AdminBaseURL: "https://auth.example.com:8081",   // optional; derived from BaseURL if empty
+	// AdminBaseURL: "https://socrate.example.com:8081", // optional; derived from BaseURL if empty
 	// Timeout:      30 * time.Second,                   // optional; default 30s
 })
 if err != nil {
@@ -341,14 +358,16 @@ inv, err := client.InviteUserAsService(ctx, socrate.ServiceInviteRequest{
 The client routes each call to the correct port automatically — you never build
 URLs yourself:
 
-- **OAuth port** (`BaseURL`, `:8080`): `GetCurrentUserProfile`, `RevokeToken`,
-  `IntrospectToken`, and the internal token exchange.
-- **Admin port** (`AdminBaseURL`, `:8081`): everything else — app-user
-  management, app management, superadmins, security, dashboard, audit logs,
-  magic links.
+- **OAuth port** (`BaseURL`, the public port): `GetCurrentUserProfile`,
+  `RevokeToken`, `IntrospectToken`, and the token endpoint calls
+  (`ExchangeCode`, `RefreshToken`, the service-account token).
+- **Admin API port** (`AdminBaseURL`; 8081 in the default deployment):
+  everything else — app-user management, app management, superadmins,
+  security, dashboard, audit logs, magic links, policy decisions.
 
 `AdminBaseURL` defaults to `BaseURL` with the host port replaced by `8081`.
-Override it explicitly if your admin port lives on a different host.
+Set it explicitly when your deployment differs, for example when the admin API
+listens on another host or port.
 
 ### 6.4 Method reference
 
@@ -402,6 +421,12 @@ automatically from `client_id` (cached).
 | Method | Auth | Returns | Notes |
 |--------|------|---------|-------|
 | `SendMagicLink(ctx, email)` | M2M | `*MagicLinkResponse` | opaque 202 (enumeration-safe); `ErrMagicLinkRateLimited` on 429 (5/hr per email+app). `MagicURL` is non-empty in dev mode only. |
+
+#### Policy decisions — Admin port
+
+| Method | Auth | Returns | Notes |
+|--------|------|---------|-------|
+| `Decide(ctx, DecideRequest)` | M2M | `*Decision` | asks Socrate's policy decision point; `ErrPolicyUnavailable` on 503, with the mode kept in the `Decision`. Usually called through `pep` (§10). |
 
 #### App (client) management — Admin port · admin JWT
 
@@ -494,20 +519,190 @@ automatically from `client_id` (cached).
 
 ## 7. Frontend: driving the login flow
 
-The frontend's job is to obtain tokens from Socrate and attach them to backend
-requests. Pick **one** primary flow.
+For a **browser app**, use a Backend-for-Frontend (§7.1). The browser then
+never sees an access or refresh token: an XSS bug cannot steal one, and there is
+no token to keep in `localStorage` or `sessionStorage`. The Socrate admin and
+monitoring consoles work this way.
 
-> **Prefer a BFF?** If you'd rather keep tokens server-side and out of the
-> browser entirely, let the frontend send the `code` (and your own session
-> cookie) to your backend, and do the exchange there with
-> `client.ExchangeCode` / `client.RefreshToken` / `client.VerifyMagicLink`
-> (§6.4, "BFF token flows"). The browser steps below collapse to "redirect,
-> then hand the `code` to my backend".
+The flows where the client obtains and holds its own tokens (§7.2–§7.6) remain
+for **mobile, native and CLI clients**, and for a legacy SPA that has not moved
+to a BFF yet.
 
-### 7.1 Authorization Code + PKCE (recommended)
+### 7.1 Browser apps: use a Backend-for-Frontend (bff)
 
-The standard, most secure browser flow. Works for public clients (SPA/mobile)
-with **no client secret**.
+The BFF is the confidential OAuth client. It runs Authorization Code + PKCE
+server-side, keeps the tokens in a server-side session, and gives the browser
+only an opaque `HttpOnly`, `SameSite=Strict`, `__Host-` session cookie. The SPA
+calls same-origin paths; the BFF looks up the session, refreshes the access
+token when it is about to expire, and forwards the request to your API with
+`Authorization: Bearer` attached. Your API validates that token with `jwtauth`
+exactly as in §4.
+
+A minimal BFF with the `bff` package and `socrate.Client`:
+
+```go
+package main
+
+import (
+	"encoding/json"
+	"log"
+	"net/http"
+	"net/url"
+	"os"
+	"sync"
+	"time"
+
+	"github.com/ovander/backendkit/bff"
+	"github.com/ovander/backendkit/socrate"
+)
+
+// pendingLogin is what the BFF remembers between /bff/login and /bff/callback.
+type pendingLogin struct {
+	Verifier, Nonce, ReturnTo string
+	Expires                   time.Time
+}
+
+func main() {
+	const socrateURL = "https://socrate.example.com"
+	const redirectURI = "https://app.example.com/bff/callback"
+	apiURL, _ := url.Parse("http://127.0.0.1:9000") // your API, reachable only from the BFF
+
+	client, err := socrate.NewClient(socrate.ClientConfig{
+		BaseURL:      socrateURL,
+		ClientID:     os.Getenv("SOCRATE_CLIENT_ID"),
+		ClientSecret: os.Getenv("SOCRATE_CLIENT_SECRET"), // the BFF is a confidential client
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	store := bff.NewMemoryStore(30*time.Minute, 8*time.Hour) // idle, absolute
+	go func() {
+		for range time.Tick(time.Minute) {
+			store.Sweep()
+		}
+	}()
+
+	gw := &bff.Gateway{ // use by pointer; never copy
+		Store:     store,
+		Cookie:    bff.CookieConfig{Name: "app_session", Secure: true}, // sent as __Host-app_session
+		Refresher: client,                                             // *socrate.Client refreshes tokens
+	}
+	login := bff.LoginBinding{Cookie: bff.CookieConfig{Name: "app_login", Secure: true}}
+
+	var mu sync.Mutex
+	pending := map[string]pendingLogin{} // keyed by state; use a shared store with several instances
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /bff/login", func(w http.ResponseWriter, r *http.Request) {
+		p, state := bff.NewPKCE(), bff.RandomToken(32)
+		mu.Lock()
+		pending[state] = pendingLogin{
+			Verifier: p.Verifier,
+			Nonce:    login.Begin(w), // ties the callback to this browser
+			ReturnTo: bff.SanitizeReturnTo(r.URL.Query().Get("return_to")),
+			Expires:  time.Now().Add(bff.DefaultLoginBindingTTL),
+		}
+		mu.Unlock()
+		q := url.Values{
+			"response_type": {"code"}, "client_id": {os.Getenv("SOCRATE_CLIENT_ID")},
+			"redirect_uri": {redirectURI}, "scope": {"openid profile email"}, "state": {state},
+			"code_challenge": {p.Challenge}, "code_challenge_method": {"S256"},
+		}
+		http.Redirect(w, r, socrateURL+"/oauth/authorize?"+q.Encode(), http.StatusFound)
+	})
+
+	mux.HandleFunc("GET /bff/callback", func(w http.ResponseWriter, r *http.Request) {
+		state := r.URL.Query().Get("state")
+		mu.Lock()
+		st, ok := pending[state]
+		delete(pending, state) // single use
+		mu.Unlock()
+		if !ok || time.Now().After(st.Expires) || !login.Verify(w, r, st.Nonce) {
+			http.Error(w, "invalid login", http.StatusBadRequest)
+			return
+		}
+		ts, err := client.ExchangeCode(r.Context(), r.URL.Query().Get("code"), redirectURI, st.Verifier)
+		if err != nil {
+			http.Error(w, "login failed", http.StatusBadGateway)
+			return
+		}
+		user := bff.UserInfo{Roles: ts.Roles}
+		if p, err := client.GetCurrentUserProfile(socrate.WithJWT(r.Context(), ts.AccessToken)); err == nil && p != nil {
+			user.Sub, user.Email, user.Name = p.Sub, p.Email, p.Name
+		}
+		s := bff.NewSession(bff.RandomToken(32), bff.RandomToken(32), ts, user, time.Now())
+		store.Put(s)
+		gw.Cookie.SetSession(w, s.ID())
+		http.Redirect(w, r, st.ReturnTo, http.StatusFound)
+	})
+
+	// The SPA learns who is signed in, and the CSRF token to echo, from here.
+	mux.HandleFunc("GET /bff/session", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		s, ok := gw.SessionFromRequest(r)
+		if !ok {
+			_ = json.NewEncoder(w).Encode(map[string]any{"authenticated": false})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"authenticated": true, "user": s.User(), "csrf": s.CSRF()})
+	})
+
+	// Every API call: session cookie in, bearer out. No valid session ⇒ 401.
+	// Unsafe methods must carry the session's CSRF token in X-CSRF-Token.
+	mux.HandleFunc("/api/", gw.ProxyWithSession(bff.NewSingleHostProxy(apiURL)))
+
+	log.Fatal(http.ListenAndServe("127.0.0.1:8080", mux)) // behind your TLS edge proxy
+}
+```
+
+The SPA side is small: navigate to `/bff/login?return_to=/current/path` to sign
+in, read `GET /bff/session` to learn who is signed in, and send the `csrf`
+value from that response as `X-CSRF-Token` on every `POST`, `PUT`, `PATCH` or
+`DELETE`. It never sends an `Authorization` header.
+
+```js
+const session = await (await fetch('/bff/session')).json();
+if (!session.authenticated) location.assign('/bff/login?return_to=' + encodeURIComponent(location.pathname));
+
+await fetch('/api/reports', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf },
+  body: JSON.stringify(report),
+});
+```
+
+What the package guarantees (a request without a valid session gets 401 and is
+never forwarded; CSRF is checked in constant time; only a refresh Socrate
+rejects ends a session) is listed in the README's
+[`bff` reference](../README.md#bff). For more than one BFF instance, replace
+`MemoryStore` and the `pending` map with a shared store; `Session.Snapshot` and
+`NewSessionFromSnapshot` serialise a session.
+[`oauth2-admin/bff`](https://github.com/ovander/oauth2-admin/tree/main/bff)
+is a complete BFF built this way, with logout and token revocation.
+
+Magic links fit the same model: the page the emailed link opens posts the
+token to your BFF, which calls `client.VerifyMagicLink` and creates the session.
+
+### 7.2 Alternative: clients that hold their own tokens
+
+> ⚠️ **Use this only for mobile, native or CLI clients, or a legacy SPA not yet
+> behind a BFF.** A client that holds tokens has to protect them itself. In a
+> browser that is hard: any script running on the page — an XSS bug, a
+> compromised dependency, a browser extension — can read tokens and PKCE state
+> kept in memory, `sessionStorage` or `localStorage`, and a stolen refresh token
+> keeps working until it is rotated or revoked. Keep access tokens short-lived,
+> never put a client secret in the client, and plan the move to §7.1.
+
+Native apps should run the authorization request in the system browser and
+receive the redirect on a claimed HTTPS link, a private-use URI scheme or a
+loopback address (RFC 8252). The steps below show the protocol with browser
+APIs.
+
+### 7.3 Authorization Code + PKCE in the client
+
+For a public client (no client secret).
 
 **Step 1 — generate a PKCE verifier/challenge and redirect to Socrate:**
 
@@ -521,11 +716,12 @@ const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
 const digest   = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
 const challenge = base64url(digest);
 
+// Legacy SPA only: sessionStorage is readable by any script on the page.
 sessionStorage.setItem('pkce_verifier', verifier);
 const state = base64url(crypto.getRandomValues(new Uint8Array(16)));
 sessionStorage.setItem('oauth_state', state);
 
-const url = new URL('https://auth.example.com/oauth/authorize');
+const url = new URL('https://socrate.example.com/oauth/authorize');
 url.search = new URLSearchParams({
   response_type: 'code',
   client_id: 'YOUR_CLIENT_ID',
@@ -547,7 +743,7 @@ if (params.get('state') !== sessionStorage.getItem('oauth_state')) {
   throw new Error('state mismatch — possible CSRF');
 }
 
-const res = await fetch('https://auth.example.com/oauth/token', {
+const res = await fetch('https://socrate.example.com/oauth/token', {
   method: 'POST',
   headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
   body: new URLSearchParams({
@@ -571,7 +767,7 @@ new URLSearchParams({
 });
 ```
 
-### 7.2 Direct JSON login (first-party only)
+### 7.4 Direct JSON login (first-party only)
 
 For your *own* trusted frontends, Socrate exposes a JSON auth API on the public
 port — no redirect dance. Only use this for apps you own end-to-end.
@@ -586,19 +782,20 @@ POST /api/auth/request-password-reset  {email}
 POST /api/auth/reset-password   {token, new_password}
 ```
 
-These endpoints are rate-limited per IP. See `go-oauth2/docs/API.md` §5 for full
-shapes.
+These endpoints are rate-limited per IP. Their request and response shapes are
+documented in the Socrate server repository.
 
-### 7.3 Magic link (passwordless)
+### 7.5 Magic link (passwordless)
 
 Magic-link **send** is backend-only (M2M) — your frontend asks *your backend*,
-which calls `client.SendMagicLink`. The user clicks the emailed link, and your
-frontend completes it:
+which calls `client.SendMagicLink`. The user clicks the emailed link, and the
+page it opens completes the login. With a BFF, that page posts the token to the
+BFF (§7.1). A client that holds its own tokens posts it to Socrate:
 
 ```js
 // User landed on your magic-link page with ?token=...&client_id=... in the URL.
 // Verify is POST-only (a GET would let email scanners burn the single-use token).
-const res = await fetch('https://auth.example.com/api/auth/magic-link/verify', {
+const res = await fetch('https://socrate.example.com/api/auth/magic-link/verify', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
@@ -609,9 +806,9 @@ const res = await fetch('https://auth.example.com/api/auth/magic-link/verify', {
 const { access_token, refresh_token, id_token } = await res.json();
 ```
 
-### 7.4 Calling your backend
+### 7.6 Calling your backend with a bearer token
 
-Once you hold an `access_token`, every call to *your* backend carries it:
+A client that holds an `access_token` sends it on every call to *your* backend:
 
 ```js
 await fetch('https://api.example.com/me', {
@@ -620,7 +817,7 @@ await fetch('https://api.example.com/me', {
 ```
 
 Your backend's `jwtauth.Middleware` validates it and your handlers read identity
-from `ctxutil`. **The frontend never talks to the :8081 admin port** — route
+from `ctxutil`. **The frontend never talks to Socrate's admin API port** — route
 admin/user-management actions through your backend.
 
 ---
@@ -742,7 +939,113 @@ r.Group(func(r chi.Router) {
 
 ---
 
-## 10. Recipes
+## 10. Enforcing central policy decisions (pep)
+
+`httpware.RBAC` and `tiering.Gate` (§9) decide locally, from rules compiled into
+your service. When the rule should live in Socrate instead — one declarative
+policy over roles, user attributes, resource attributes and request context,
+shared by every application — use `pep`, the enforcement point for Socrate's
+policy decision point.
+
+Prerequisites: the client needs `ClientSecret` and `AppID` (`Decide` uses the
+service-account token), and `pep` runs after `jwtauth`, because the user's own
+access token is sent as the decision's subject. Socrate resolves the user — role,
+attributes, role in this application, how and when they authenticated — so
+nothing about the user is taken on your application's word. Your application
+supplies the action, the resource and the request context.
+
+```go
+package main
+
+import (
+	"log"
+	"net/http"
+	"os"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/sirupsen/logrus"
+
+	"github.com/ovander/backendkit/jwtauth"
+	"github.com/ovander/backendkit/pep"
+	"github.com/ovander/backendkit/socrate"
+)
+
+type invoice struct {
+	ID      string
+	Amount  int
+	OwnerID string
+}
+
+func loadInvoice(r *http.Request) invoice { return invoice{ID: chi.URLParam(r, "id")} }
+
+func main() {
+	logger := logrus.WithField("service", "billing")
+
+	client, err := socrate.NewClient(socrate.ClientConfig{
+		BaseURL:      os.Getenv("SOCRATE_BASE_URL"),
+		ClientID:     os.Getenv("SOCRATE_CLIENT_ID"),
+		ClientSecret: os.Getenv("SOCRATE_CLIENT_SECRET"), // Decide uses the service-account token
+		AppID:        os.Getenv("SOCRATE_APP_ID"),        // required by Decide
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	enf, err := pep.New(pep.Config{Decider: client, Logger: logger})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	auth := jwtauth.New(os.Getenv("SOCRATE_JWKS_URL"), os.Getenv("SOCRATE_ISSUER"), logger,
+		jwtauth.WithAudience(os.Getenv("SOCRATE_CLIENT_ID")))
+
+	r := chi.NewRouter()
+	r.Use(auth.Handler) // first: the user's own token is the decision's subject
+
+	// Route level: one decision before the handler runs.
+	r.With(enf.Middleware(func(r *http.Request) (string, socrate.PolicyResource, bool) {
+		return "invoice.read", socrate.PolicyResource{Type: "invoice"}, true
+	})).Get("/invoices", func(w http.ResponseWriter, r *http.Request) { /* … */ })
+
+	// Object level: once the resource is loaded, with its attributes.
+	r.Post("/invoices/{id}/approve", func(w http.ResponseWriter, r *http.Request) {
+		inv := loadInvoice(r)
+		err := enf.Check(r.Context(), "invoice.approve", socrate.PolicyResource{
+			Type: "invoice", ID: inv.ID,
+			Attributes: map[string]any{"amount": inv.Amount, "owner_id": inv.OwnerID},
+		}, pep.ContextFor(r))
+		if pep.WriteDenial(w, err) { // 403 policy_denied, 403 mfa_required, 503 policy_unavailable…
+			return
+		}
+		// … approve
+	})
+
+	log.Fatal(http.ListenAndServe(":8080", r))
+}
+```
+
+What happens to a denial depends on the mode Socrate reports with each decision,
+set centrally by its `POLICY_MODE`: `off` ignores it, `shadow` logs
+`pep: policy would deny` and lets the request through, `enforce` refuses it. So
+you can deploy the checks in `shadow`, read the would-deny lines, and switch to
+`enforce` in Socrate without redeploying.
+
+Your frontend sees these error codes, in the `{"error": "<code>"}` shape:
+
+| Status | `error` | Meaning |
+|--------|---------|---------|
+| 401 | `unauthenticated` | no user token in context (`pep` mounted before `jwtauth`) |
+| 403 | `policy_denied` | the policy refused the action (`enforce` mode) |
+| 403 | `elevation_required` | the policy requires a recent sign-in; re-authenticate |
+| 403 | `mfa_required` | the policy requires multi-factor authentication |
+| 503 | `policy_unavailable` | Socrate could not be asked and the mode is `enforce`, or not yet known |
+
+The README's [`pep` reference](../README.md#pep) details obligations, the
+behaviour when Socrate is unreachable (`FailOpenWhenModeUnknown`), `CheckAsApp`
+for background jobs and the `OnDecision` metrics hook.
+
+---
+
+## 11. Recipes
 
 ### Onboard a teammate from your backend (M2M)
 
@@ -800,26 +1103,30 @@ if err != nil || !res.Active {
 
 ---
 
-## 11. Quick reference
+## 12. Quick reference
 
 ### Method → endpoint → auth → port
 
+`OAuth` is Socrate's public OAuth/OIDC port; `Admin` is its internal admin API
+port (8081 in the default deployment).
+
 | Client method | HTTP | Auth | Port |
 |---------------|------|------|------|
-| `GetCurrentUserProfile` | `GET /oauth/userinfo` | JWT | 8080 |
-| `IntrospectToken` | `POST /oauth/introspect` | creds | 8080 |
-| `RevokeToken` | `POST /oauth/revoke` | creds | 8080 |
-| `ListUsers` / `GetUser` / `CreateUser` | `…/api/apps/{id}/users` | JWT | 8081 |
-| `UpdateUserRole` / `DeleteUser` | `…/api/apps/{id}/users/{uid}` | JWT | 8081 |
-| `ResendVerification` / `ForcePasswordReset` | `…/users/{uid}/…` | JWT | 8081 |
-| `RegisterUser` / `GetUserAsService` | `…/api/apps/{id}/users…` | M2M | 8081 |
-| `InviteUserAsService` | `POST …/api/apps/{id}/service/users` | M2M | 8081 |
-| `SendMagicLink` | `POST …/api/apps/{id}/service/magic-link` | M2M | 8081 |
-| `ListApps` … `RotateSecret` | `…/api/admin/apps…` | JWT (admin) | 8081 |
-| `AdminListUsers` … `RevokeUserTokens` | `…/api/admin/users…` | JWT (superadmin) | 8081 |
-| `*Superadmin*` | `…/api/admin/superadmins…` | JWT (superadmin) | 8081 |
-| `GetThreatMetrics` … `GetIPReputation` | `…/api/admin/security…` | JWT (admin) | 8081 |
-| `GetDashboard*` / `*AdminLog*` | `…/api/admin/dashboard|logs…` | JWT (admin) | 8081 |
+| `GetCurrentUserProfile` | `GET /oauth/userinfo` | JWT | OAuth |
+| `IntrospectToken` | `POST /oauth/introspect` | creds | OAuth |
+| `RevokeToken` | `POST /oauth/revoke` | creds | OAuth |
+| `ListUsers` / `GetUser` / `CreateUser` | `…/api/apps/{id}/users` | JWT | Admin |
+| `UpdateUserRole` / `DeleteUser` | `…/api/apps/{id}/users/{uid}` | JWT | Admin |
+| `ResendVerification` / `ForcePasswordReset` | `…/users/{uid}/…` | JWT | Admin |
+| `RegisterUser` / `GetUserAsService` | `…/api/apps/{id}/users…` | M2M | Admin |
+| `InviteUserAsService` | `POST …/api/apps/{id}/service/users` | M2M | Admin |
+| `SendMagicLink` | `POST …/api/apps/{id}/service/magic-link` | M2M | Admin |
+| `ListApps` … `RotateSecret` | `…/api/admin/apps…` | JWT (admin) | Admin |
+| `AdminListUsers` … `RevokeUserTokens` | `…/api/admin/users…` | JWT (superadmin) | Admin |
+| `*Superadmin*` | `…/api/admin/superadmins…` | JWT (superadmin) | Admin |
+| `GetThreatMetrics` … `GetIPReputation` | `…/api/admin/security…` | JWT (admin) | Admin |
+| `GetDashboard*` / `*AdminLog*` | `…/api/admin/dashboard…`, `…/api/admin/logs…` | JWT (admin) | Admin |
+| `Decide` | `POST …/api/apps/{id}/service/policy/decide` | M2M | Admin |
 
 ### Roles (highest → lowest privilege)
 
@@ -831,7 +1138,7 @@ if err != nil || !res.Active {
 
 ---
 
-## 12. Gotchas & FAQ
+## 13. Gotchas & FAQ
 
 **"no JWT in context" error from a client method.** A mode-A (JWT-forwarding)
 method ran without a token in context. Inside a handler, ensure `auth.Handler`
@@ -855,9 +1162,17 @@ causes: wrong `SOCRATE_ISSUER` (issuer mismatch), clock skew (expired), or the
 JWKS URL pointing at the wrong environment. Check `jwtauth` logs — it logs the
 validation failure reason.
 
-**Should the frontend ever call the :8081 admin port?** No. It's internal.
+**Should the frontend ever call Socrate's admin API port?** No. It's internal
+(8081 in the default deployment).
 Proxy every admin/user-management action through your backend so you can apply
 your own authorization first.
+
+**The BFF answers 403 on a `POST`.** The request lacks the session's CSRF
+token. Read `csrf` from your session endpoint and send it as `X-CSRF-Token` on
+every unsafe method (§7.1).
+
+**Every `pep` check answers 401.** `pep` runs before `jwtauth`, so there is no
+user token in context. Mount `auth.Handler` first (§10).
 
 **Is the client safe to share across goroutines?** Yes. Construct one at startup
 and reuse it; the service-account token cache is mutex-guarded.
@@ -867,5 +1182,5 @@ and reuse it; the service-account token cache is mutex-guarded.
 ### See also
 
 - [`README.md`](../README.md) — package-by-package reference for all of backendkit.
-- [`go-oauth2/docs/API.md`](https://github.com/ovander/go-oauth2/blob/main/docs/API.md) — the canonical server-side HTTP API reference.
+- The Socrate server repository (`ovander/go-oauth2`, not public yet) documents the raw HTTP API.
 - Go API docs: <https://pkg.go.dev/github.com/ovander/backendkit/socrate>

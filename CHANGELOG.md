@@ -1,13 +1,13 @@
 # Changelog
 
-All notable changes to backendkit are documented here. The format is based on
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+All notable changes to backendkit are documented here. Format:
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
+[Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-Policy enforcement for applications (Socrate plan A4, part 2), and a patched
-build toolchain. Both purely additive for consumers.
+Policy enforcement for applications against Socrate's central policy decision
+point, and a patched build toolchain. Both purely additive for consumers.
 
 ### Added
 
@@ -39,6 +39,9 @@ build toolchain. Both purely additive for consumers.
 
 ### Changed
 
+- **Documentation uplift:** the README, `docs/CLIENT-INTEGRATION.md` (new BFF and `pep`
+  sections; a BFF is now the recommended path for browser apps), `SECURITY.md`, `CONTRIBUTING.md`
+  and the GitHub templates follow the Socrate suite's documentation standard.
 - **Build toolchain: Go 1.26.8 → Go 1.27.1** (`toolchain` directive and CI).
   The `go 1.25.0` minimum is unchanged: consumers are unaffected, and the
   GODEBUG defaults this module's own tests run with stay those of Go 1.25.
@@ -53,14 +56,15 @@ build toolchain. Both purely additive for consumers.
 ### Fixed
 
 - README and `docs/CLIENT-INTEGRATION.md` linked Socrate to a repository that does not exist;
-  they now point to `ovander/go-oauth2`. The README's contributing rule on cross-package imports
-  now matches the code (`bff`/`pep` → `socrate`, `aigateway` → `ailang`).
+  they now name `ovander/go-oauth2` in plain text, as it is not public yet. The README's
+  contributing rule on cross-package imports now matches the code (`bff`/`pep` → `socrate`,
+  `aigateway` → `ailang`).
 
 ### Removed
 
-- The internal review documents (`CTO-ARCHITECTURE-REVIEW.md`, `FRAMEWORK-EVOLUTION.md`,
-  `SECURITY-ARCHITECTURE.md`, `SECURITY-AUDIT.md`) left the public tree. The fixes they led to
-  remain listed below with their finding IDs.
+- The internal review documents (the architecture review, the framework-evolution notes, the
+  security architecture review and the security audit) left the public tree. The fixes they led
+  to remain listed below with their finding IDs.
 
 ## [1.13.0] - 2026-09-04
 
@@ -81,9 +85,8 @@ service lands on one dashboard. Purely additive.
 
 ## [1.12.0] - 2026-09-03
 
-Shared-gateway hardening from the Socrate suite pass-3 audit
-(`CR-socrate-suite-security-pass3.md`, `go-oauth2` repo). Additive except
-for one behaviour change called out below.
+Shared-gateway hardening from the third-pass security review of the Socrate
+suite. Additive except for one behaviour change called out below.
 
 > **Behaviour change (P3-12):** `Gateway.ProxyWithSession` no longer deletes
 > the session on *every* refresh error. Only a refresh the authorization
@@ -179,15 +182,15 @@ for one behaviour change called out below.
   called `ConstantTimeCompare` directly, so a session that somehow lost its
   CSRF value (`csrf == ""`) matched an empty request token, silently
   disabling CSRF protection for that session. `MatchCSRF` now always returns
-  `false` when the stored value is empty. Addresses **P2-6**
-  (`CR-socrate-suite-security-pass2.md`, upstream `go-oauth2` repo).
+  `false` when the stored value is empty. Addresses **P2-6** (second-pass
+  security review of the Socrate suite).
 
 - **bff: `Gateway`'s zero value is now fail-closed.** `Gateway.AuthEnabled`
   defaulted to `false`, so a bare `&Gateway{...}` struct literal — no field
   set — was a fully-open pass-through, contradicting this package's
   documented "fail-closed by default" behaviour. The field is renamed and
   inverted to **`DisableAuth`**, so the zero value now means "auth enforced."
-  Addresses **P2-7** (`CR-socrate-suite-security-pass2.md`).
+  Addresses **P2-7** (second-pass security review).
 
 - **bff: coalesce concurrent token refreshes per session.** Concurrent
   `EnsureFresh` calls near token expiry could each independently spend the
@@ -195,7 +198,7 @@ for one behaviour change called out below.
   rest tore down the session. `EnsureFresh` now coalesces concurrent calls
   per session ID via `singleflight.Group` (mirroring the `jwtauth` H-1 JWKS
   fix), with every waiter re-checking token validity before spending a
-  refresh. Addresses **P2-8** (`CR-socrate-suite-security-pass2.md`).
+  refresh. Addresses **P2-8** (second-pass security review).
 
 ### Migration
 
@@ -244,13 +247,13 @@ gw := &bff.Gateway{Store: store, Cookie: cookie, Refresher: r}
   inside the window returns key-not-found without a network call, and (3) backed
   by a short negative cache (default 30s; `WithNegativeCacheTTL`) for recently-seen
   unknown kids. A legitimately rotated key still resolves: the first miss after the
-  cooldown triggers exactly one refetch. Addresses **H-1** (`SECURITY-AUDIT.md`).
+  cooldown triggers exactly one refetch. Addresses **H-1** (internal security audit).
 
 - **jwtauth: require `exp` and add clock-skew leeway.** The parser now sets
   `jwt.WithExpirationRequired()`, so a token minted without an `exp` claim (which
   would otherwise never expire) is rejected, plus `jwt.WithLeeway` (default 60s;
   `WithLeeway`) for time-based claim validation. Addresses **M-2**
-  (`SECURITY-AUDIT.md`).
+  (internal security audit).
 
 - **socrate: complete path-segment escaping (corrects the F-7 ledger).** v1.9.0
   escaped only `client.go`; the remaining admin/monitoring/alerts/reports methods
@@ -259,7 +262,7 @@ gw := &bff.Gateway{Store: store, Cookie: cookie, Refresher: r}
   `alerts.go` and `reports.go` (user/app/superadmin/blocked-ip/ip-reputation/log/
   alert-rule/report IDs). Internal server-resolved values (e.g. the app ID) are
   intentionally left unescaped, as in `client.go`. Addresses **M-1** and corrects
-  the previously overstated **F-7** "Fixed" claim (`SECURITY-AUDIT.md`).
+  the previously overstated **F-7** "Fixed" claim (internal security audit).
 
 ## [1.9.0] - 2026-06-20
 
@@ -269,7 +272,7 @@ gw := &bff.Gateway{Store: store, Cookie: cookie, Refresher: r}
   warning at construction when the issuer is empty, so a service running without
   `iss` enforcement is visible at startup instead of silently fail-open. No change
   to token validation; making issuer mandatory remains a v2.0 default-flip.
-  Addresses **F-5** (`SECURITY-AUDIT.md`).
+  Addresses **F-5** (internal security audit).
   ([#30](https://github.com/ovander/backendkit/issues/30))
 
 - **apierror: redact internal message/details on 5xx responses.** `WriteJSON` now
@@ -277,8 +280,8 @@ gw := &bff.Gateway{Store: store, Cookie: cookie, Refresher: r}
   for any 5xx response, so internal detail (e.g. `apierror.Internal(err.Error())`)
   can no longer leak to clients. **4xx responses are unchanged.** The full error
   is still available server-side via `Error()` for logging; the struct doc was
-  corrected. Addresses **F-17 / INV-9** (`SECURITY-AUDIT.md`,
-  `SECURITY-ARCHITECTURE.md`).
+  corrected. Addresses **F-17 / INV-9** (internal security audit
+  and architecture review).
   **Behaviour change:** 5xx response bodies no longer echo the supplied message.
   ([#28](https://github.com/ovander/backendkit/issues/28))
 
@@ -287,7 +290,7 @@ gw := &bff.Gateway{Store: store, Cookie: cookie, Refresher: r}
   timing/row-count/caller). GORM hands the logger SQL with bound parameter values
   already interpolated — which can contain PII or secrets — so production loggers
   should enable it. Opt-in; default behaviour unchanged. Addresses **F-9 / INV-10**
-  (`SECURITY-AUDIT.md`, `SECURITY-ARCHITECTURE.md`).
+  (internal security audit and architecture review).
   ([#26](https://github.com/ovander/backendkit/issues/26))
 
 - **jwtauth / socrate / aigateway: bound upstream response reads.** All reads of
@@ -295,7 +298,7 @@ gw := &bff.Gateway{Store: store, Cookie: cookie, Refresher: r}
   Socrate and AI-provider responses at 10 MiB — so a compromised/MITM or oversized
   upstream cannot exhaust memory. `socrate.readBody` returns an explicit error when
   the cap is exceeded. Normal-size responses are unaffected. Addresses
-  **F-8 / INV-12** (`SECURITY-AUDIT.md`, `SECURITY-ARCHITECTURE.md`).
+  **F-8 / INV-12** (internal security audit and architecture review).
   ([#24](https://github.com/ovander/backendkit/issues/24))
 
 - **socrate: path-escape `userID` in request URLs.** `socrate.Client` now wraps the
@@ -303,7 +306,7 @@ gw := &bff.Gateway{Store: store, Cookie: cookie, Refresher: r}
   it (`GetUser`, `UpdateUserRole`, `DeleteUser`, `ResendVerification`,
   `ForcePasswordReset`, `GetUserAsService`), so an ID containing `/`, `?`, `#`, or
   `..` can no longer rewrite the target route. Addresses **F-7 / INV-11**
-  (`SECURITY-AUDIT.md`, `SECURITY-ARCHITECTURE.md`).
+  (internal security audit and architecture review).
   ([#22](https://github.com/ovander/backendkit/issues/22))
 
 ## [1.8.0] - 2026-06-20
@@ -315,7 +318,7 @@ gw := &bff.Gateway{Store: store, Cookie: cookie, Refresher: r}
   exponent (odd, > 1, within `int` range) instead of silently truncating it, so a
   JWKS serving an undersized or malformed key is no longer trusted. Backward
   compatible for real deployments (Socrate/RS256 use ≥2048-bit keys). Addresses
-  **F-10 / INV-13** (`SECURITY-AUDIT.md`, `SECURITY-ARCHITECTURE.md`).
+  **F-10 / INV-13** (internal security audit and architecture review).
   ([#18](https://github.com/ovander/backendkit/issues/18))
 
 - **deps: bump `golang-jwt/jwt/v5` `v5.2.1` → `v5.2.2`.** Clears GO-2025-3553
@@ -343,7 +346,7 @@ gw := &bff.Gateway{Store: store, Cookie: cookie, Refresher: r}
   `token_version` (logout / password-change / admin revocation) or a `jti` denylist
   — checks that local signature validation alone cannot. Opt-in: with none
   configured, a token stays valid until `exp` as before. Addresses **F-2 / INV-3**
-  (`SECURITY-AUDIT.md`, `SECURITY-ARCHITECTURE.md`).
+  (internal security audit and architecture review).
   ([#16](https://github.com/ovander/backendkit/issues/16))
 
 - **httpware: `RequireTenant` middleware.** A plain
@@ -352,7 +355,7 @@ gw := &bff.Gateway{Store: store, Cookie: cookie, Refresher: r}
   tenant-scoped handlers can never run against the nil tenant. Opt-in; mount it
   after the auth middleware on tenant-scoped route groups. Rejections are logged
   through the request-scoped logger. Addresses **F-3 / INV-6**
-  (`SECURITY-AUDIT.md`, `SECURITY-ARCHITECTURE.md`).
+  (internal security audit and architecture review).
   ([#14](https://github.com/ovander/backendkit/issues/14))
 
 - **jwtauth: opt-in JWT audience (`aud`) validation.** New `jwtauth.Option`
@@ -361,7 +364,7 @@ gw := &bff.Gateway{Store: store, Cookie: cookie, Refresher: r}
   expected audience (typically the service's OAuth `client_id`), closing the
   cross-app token-replay exposure where one Socrate-issued token was valid at
   every service sharing the same issuer and JWKS.
-  Resolves **F-1 / INV-2** (`SECURITY-AUDIT.md`, `SECURITY-ARCHITECTURE.md`).
+  Resolves **F-1 / INV-2** (internal security audit and architecture review).
   ([#6](https://github.com/ovander/backendkit/issues/6))
 
 ### Migration
@@ -388,9 +391,11 @@ are rejected. Confirm your Socrate server populates `aud` before enabling it in
 production. Making audience validation required-by-default is deferred to a future
 major (v2.0) and tracked separately.
 
-### Notes
-
-- `govulncheck` is part of the required quality gates but could not be executed in
-  the CI sandbox for this change because `https://vuln.go.dev` is blocked by the
-  environment's network policy. All other gates (`go fmt`, `go vet`,
-  `golangci-lint`, `go test`, `go test -race`) pass.
+[Unreleased]: https://github.com/ovander/backendkit/compare/v1.13.0...HEAD
+[1.13.0]: https://github.com/ovander/backendkit/compare/v1.12.0...v1.13.0
+[1.12.0]: https://github.com/ovander/backendkit/compare/v1.11.1...v1.12.0
+[1.11.1]: https://github.com/ovander/backendkit/compare/v1.11.0...v1.11.1
+[1.11.0]: https://github.com/ovander/backendkit/compare/v1.10.0...v1.11.0
+[1.10.0]: https://github.com/ovander/backendkit/compare/v1.9.0...v1.10.0
+[1.9.0]: https://github.com/ovander/backendkit/compare/v1.8.0...v1.9.0
+[1.8.0]: https://github.com/ovander/backendkit/compare/v1.7.0...v1.8.0

@@ -1,9 +1,9 @@
 # Contributing to backendkit
 
-Thank you for your interest. backendkit is the shared Go library of the Socrate suite: it lets a
-Go service authenticate users against the Socrate OAuth 2.1 / OIDC provider
-([`ovander/go-oauth2`](https://github.com/ovander/go-oauth2)), run a Backend-for-Frontend, and
-enforce Socrate's policies. Contributions are accepted under the project's licence,
+Thank you for your interest. backendkit is part of the Socrate suite: it is the shared Go library
+that lets a service validate tokens from Socrate, the suite's OAuth 2.1 / OpenID Connect server
+(`ovander/go-oauth2`, not public yet), run a Backend-for-Frontend, and enforce Socrate's central
+policy decisions. Contributions are accepted under the project's licence,
 [Apache-2.0](LICENSE).
 
 ## Development setup
@@ -26,6 +26,8 @@ go test ./...
   discussing it first.
 - Every exported symbol has a doc comment that begins with its name. Runnable examples go in
   `example_test.go`; they appear on pkg.go.dev.
+- A new package gets a package doc comment, a row in the README package tables and a section in
+  the README package reference.
 - Security-relevant behaviour fails closed by default (for example, `bff.Gateway` answers 401
   without a valid session instead of passing the request through). An opt-out must be an
   explicit, documented option.
@@ -46,16 +48,19 @@ govulncheck ./...
 ```
 
 - Tests sit next to the code (`*_test.go`), table-driven.
-- A bug fix comes with a test that fails without it.
+- Do not weaken a check to get green: no skipped or deleted tests, and no `//nolint` or `t.Skip`
+  without a one-line reason.
 
 ## Pull requests
 
-1. Branch from `main` (`feat/…`, `fix/…`, `chore/…`, `docs/…`).
+1. Branch from `main` (`feat/…`, `fix/…`, `chore/…`, `ci/…`, `docs/…`). Keep one change per
+   pull request.
 2. Commit with [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`,
    `chore:`, `docs:`, `ci:`, `test:`).
-3. Add a line under `## [Unreleased]` in [`CHANGELOG.md`](CHANGELOG.md).
-4. Open the PR with the template filled in, including any change to the exported API.
-5. CI must be green. The maintainer reviews and merges.
+3. A bug fix comes with a test that fails without it.
+4. Add a line under `## [Unreleased]` in [`CHANGELOG.md`](CHANGELOG.md).
+5. Open the PR with the template filled in, including any change to the exported API.
+6. CI must be green. The maintainer reviews and merges.
 
 ## Releases
 
