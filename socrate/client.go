@@ -287,6 +287,9 @@ func (c *Client) getServiceToken(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("build token request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	// Deliberately no ApplyClientAttribution: this is the application acting
+	// as itself (no browser involved), and the token it yields is cached and
+	// shared across every later caller.
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -717,7 +720,9 @@ func (c *Client) GetCurrentUserProfile(ctx context.Context) (*ProfileInfo, error
 }
 
 // RevokeToken revokes an access or refresh token (RFC 7009).
-// Uses the service-account credentials for client authentication.
+// Uses the service-account credentials for client authentication. Revocation
+// is done on a user's behalf (logout), so the ClientAttribution in ctx, if any,
+// is applied.
 func (c *Client) RevokeToken(ctx context.Context, token string) error {
 	if c.clientSecret == "" {
 		return errors.New("socrate: client_secret required for token revocation")
@@ -733,6 +738,7 @@ func (c *Client) RevokeToken(ctx context.Context, token string) error {
 		return fmt.Errorf("build revoke request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	ApplyClientAttribution(req)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("revoke: %w", err)

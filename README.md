@@ -552,6 +552,41 @@ logs, and policy decisions (`Decide`). The
 auth modes and port routing and has the method reference, with the auth mode and port of each
 call.
 
+#### Client attribution
+
+A BFF calls Socrate's token and revoke endpoints server-to-server, so Socrate would audit a login,
+refresh or logout as the BFF (`127.0.0.1`, `Go-http-client/1.1`). Put the browser's address and
+User-Agent on the context and the calls made on a user's behalf — `ExchangeCode`, `RefreshToken`,
+`RevokeToken`, `VerifyMagicLink`, `AdminLogin`, `Logout` — send them as `X-Forwarded-For` and
+`User-Agent`. Service-account calls (the `client_credentials` grant), `IntrospectToken` and
+`GetCurrentUserProfile` never do. Without attribution on the context nothing changes.
+
+```go
+// ip comes from YOUR resolver (trust X-Forwarded-For only from your own edge proxy),
+// never from a raw request header.
+ctx := socrate.WithClientAttribution(r.Context(), socrate.ClientAttribution{
+    IP:        ip,
+    UserAgent: r.UserAgent(),
+})
+ts, err := client.ExchangeCode(ctx, code, redirectURI, verifier)
+
+// A BFF building its own token/revoke requests applies it itself:
+req, _ := http.NewRequestWithContext(ctx, http.MethodPost, revokeURL, body)
+socrate.ApplyClientAttribution(req)
+```
+
+| Symbol | Purpose |
+|---|---|
+| `ClientAttribution{IP, UserAgent}` | The browser a call is made for |
+| `WithClientAttribution(ctx, a)` / `ClientAttributionFrom(ctx)` | Store / read it on a context |
+| `ApplyClientAttribution(req)` | Set the headers on a request from its context |
+
+`X-Forwarded-For` is **replaced** with exactly the one address (and `X-Real-IP` removed), never
+appended to: Socrate takes the leftmost entry from a trusted proxy, so appending to a
+browser-supplied value would let the browser choose its logged address. An address that does not
+parse sends nothing; the User-Agent loses its control characters and is capped at 512 bytes. In a
+`bff` BFF, [`bff.WithClientAttribution`](#bff) sets this from the incoming request.
+
 Full API: [pkg.go.dev/…/socrate](https://pkg.go.dev/github.com/ovander/backendkit/socrate).
 
 ---
@@ -625,6 +660,13 @@ gw := &bff.Gateway{
 // Every API call: session cookie in, bearer out. No valid session ⇒ 401, never a pass-through.
 // Unsafe methods must carry the session's CSRF token in X-CSRF-Token.
 mux.HandleFunc("/api/", gw.ProxyWithSession(bff.NewSingleHostProxy(apiURL)))
+
+// Optional: attribute token calls to the browser; serve this instead of mux.
+// clientIP is your own resolver (X-Forwarded-For only from your edge proxy).
+handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.ServeHTTP(w, bff.WithClientAttribution(r, clientIP(r)))
+})
+log.Fatal(http.ListenAndServe("127.0.0.1:8080", handler))
 ```
 
 The login and callback handlers that create the session (`NewPKCE`, `LoginBinding`,
@@ -644,6 +686,7 @@ built this way.
 | Open redirect | `SanitizeReturnTo` keeps only same-site paths such as `/dashboard?x=1`; absolute URLs, `//host`, backslash and control-character tricks all become `/` |
 | Token refresh | Proactive, coalesced per session, detached from the triggering request, and written through to the store so the rotated refresh token is kept. Only a refresh the server rejects (`IsFatalRefreshError`) ends the session; a transient failure answers 502 and keeps it |
 | Upstream attribution | `NewSingleHostProxy` strips client-supplied IP-attribution headers (`X-Real-IP`, `True-Client-IP`, `Forwarded`), so the browser cannot steer Socrate's rate limits, IP blocks or audit trail; `X-Forwarded-For` is left to the edge proxy |
+| Token-call attribution | Opt-in: `WithClientAttribution(r, ip)` puts the browser's address (as **your** resolver found it) and User-Agent on the request context, so the code exchange, the gateway's refresh and revocation are audited by Socrate as the browser rather than as the BFF (see [client attribution](#client-attribution)) |
 
 **Several instances.** `MemoryStore` is per process. Behind a load balancer, implement
 `SessionStore` (`Get`, `Put`, `Delete`, `Sweep`) over a shared database, serialising sessions

@@ -398,6 +398,10 @@ confidential clients.
 | `VerifyMagicLink(ctx, token)` | client_id | `*LoginResult` | completes passwordless login; `ErrMagicLinkAlreadyUsed` (422), `ErrMagicLinkInvalid` (401). |
 | `AdminLogin(ctx, email, password)` | creds | `*LoginResult` | superadmin portal login; `ErrInvalidCredentials` (401). |
 
+These calls, with `RevokeToken` and `Logout`, send the browser's address and
+User-Agent when the context carries a `socrate.ClientAttribution` — see
+[client attribution](#client-attribution-telling-socrate-who-the-browser-is).
+
 #### App-scoped user management — Admin port
 
 Operates on **your app's** users (`/api/apps/{app_id}/users`). App ID resolved
@@ -684,6 +688,54 @@ is a complete BFF built this way, with logout and token revocation.
 
 Magic links fit the same model: the page the emailed link opens posts the
 token to your BFF, which calls `client.VerifyMagicLink` and creates the session.
+
+#### Client attribution: telling Socrate who the browser is
+
+The BFF calls `/oauth/token` (code exchange, refresh) and `/oauth/revoke`
+server-to-server, usually over loopback. Socrate records the client IP and
+User-Agent of every audited event, so without more it logs those as the BFF
+(`127.0.0.1`, `Go-http-client/1.1`), and its per-IP rate limits and IP blocks
+on the token endpoint apply to the BFF as a whole. Client attribution is
+opt-in: put the browser's address and User-Agent on the request context, and
+the `socrate.Client` calls made on the user's behalf (`ExchangeCode`,
+`RefreshToken`, `RevokeToken`, `VerifyMagicLink`, `AdminLogin`, `Logout`) send
+them as `X-Forwarded-For` and `User-Agent`. The `client_credentials` grant,
+introspection and userinfo never do: no browser is involved.
+
+```go
+// clientIP is YOUR resolver: trust X-Forwarded-For only when the peer is your
+// own edge proxy (e.g. loopback), else use RemoteAddr.
+attribute := func(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, bff.WithClientAttribution(r, clientIP(r)))
+	})
+}
+log.Fatal(http.ListenAndServe("127.0.0.1:8080", attribute(mux)))
+```
+
+With that one wrapper, the callback's `client.ExchangeCode(r.Context(), …)`,
+the gateway's refresh (it keeps the request context's values while detaching
+its cancellation) and a logout's `client.RevokeToken(r.Context(), …)` are all
+attributed. A BFF that builds its own token or revoke requests calls
+`socrate.ApplyClientAttribution(req)` on each, with a context carrying the
+attribution.
+
+Two rules:
+
+- **Pass an address you resolved, never a header.** Socrate trusts what the BFF
+  sends from loopback. Passing the browser's own `X-Forwarded-For` or
+  `X-Real-IP` would let it pick the address it is rate-limited, blocked and
+  audited as. backendkit does not resolve client IPs; your BFF does.
+- **Replace, never append.** `X-Forwarded-For` is set to exactly the one
+  address, and `X-Real-IP` removed, because Socrate takes the **leftmost**
+  entry from a trusted proxy: appending to a browser-supplied value would leave
+  the browser's claim leftmost. An address that does not parse sends nothing;
+  the User-Agent has control characters removed and is capped at 512 bytes.
+
+Socrate honours the header only when the connection comes from one of its
+`TRUSTED_PROXIES` (default `127.0.0.1/32,::1/128`), so a BFF on the same host
+is covered; a BFF on another host needs its address added there, never a wide
+range.
 
 ### 7.2 Alternative: clients that hold their own tokens
 
