@@ -6,6 +6,13 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-09-29
+
+Minor release on the **v1** line: no breaking change to any exported identifier. It adds opt-in
+client attribution, so a Backend-for-Frontend can tell Socrate which browser a token, refresh or
+revoke call is made for (`socrate.WithClientAttribution`, `socrate.ApplyClientAttribution`,
+`bff.WithClientAttribution`). Without it, requests are unchanged.
+
 ### Added
 
 - **Client attribution for OAuth calls made on a user's behalf** (`socrate`, `bff`; opt-in,
@@ -415,7 +422,8 @@ are rejected. Confirm your Socrate server populates `aud` before enabling it in
 production. Making audience validation required-by-default is deferred to a future
 major (v2.0) and tracked separately.
 
-[Unreleased]: https://github.com/ovander/backendkit/compare/v1.14.0...HEAD
+[Unreleased]: https://github.com/ovander/backendkit/compare/v1.15.0...HEAD
+[1.15.0]: https://github.com/ovander/backendkit/compare/v1.14.0...v1.15.0
 [1.14.0]: https://github.com/ovander/backendkit/compare/v1.13.0...v1.14.0
 [1.13.0]: https://github.com/ovander/backendkit/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/ovander/backendkit/compare/v1.11.1...v1.12.0
