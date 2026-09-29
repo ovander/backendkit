@@ -4,7 +4,7 @@
 [![CI](https://github.com/ovander/backendkit/actions/workflows/ci.yml/badge.svg)](https://github.com/ovander/backendkit/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/ovander/backendkit)](https://goreportcard.com/report/github.com/ovander/backendkit)
 
-Shared Go library for backend services that use [Socrate](https://github.com/ovander/socrate) as their OAuth2/OIDC provider.
+Shared Go library for backend services that use [Socrate](https://github.com/ovander/go-oauth2) as their OAuth2/OIDC provider.
 
 ---
 
@@ -19,12 +19,14 @@ Shared Go library for backend services that use [Socrate](https://github.com/ova
 - [Architecture overview](#architecture-overview)
 - [Full integration example](#full-integration-example)
 - [Package reference](#package-reference)
-  — [apierror](#apierror) · [ctxutil](#ctxutil) · [httpware](#httpware) · [gormlogger](#gormlogger) · [socrate](#socrate) · [jwtauth](#jwtauth) · [tiering](#tiering) · [pep](#pep) · [aigateway](#aigateway) · [ainarration](#ainarration) · [pagination](#pagination) · [buildinfo](#buildinfo)
+  — [apierror](#apierror) · [ctxutil](#ctxutil) · [httpware](#httpware) · [gormlogger](#gormlogger) · [socrate](#socrate) · [jwtauth](#jwtauth) · [bff](#bff) · [pep](#pep) · [tiering](#tiering) · [aigateway](#aigateway) · [ailang](#ailang) · [ainarration](#ainarration) · [pagination](#pagination) · [buildinfo](#buildinfo)
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
 - [Production usage](#production-usage)
 - [Versioning](#versioning)
 - [Contributing](#contributing)
+- [Security](#security)
+- [License](#license)
 
 ---
 
@@ -141,10 +143,12 @@ func main() {
 | [`httpware`](#httpware) | Chi-compatible middlewares: RequestID, Logger, SecurityHeaders, BodyLimit, Recover, Timeout, RateLimiter, RequireTenant, RBAC, Metrics (Prometheus RED) |
 | [`gormlogger`](#gormlogger) | GORM → logrus bridge with slow-query detection |
 | [`jwtauth`](#jwtauth) | JWT RS256 validation middleware with JWKS cache and stale-key fallback |
+| [`bff`](#bff) | Backend-for-Frontend runtime: server-side sessions, `__Host-` cookies, CSRF, PKCE, login binding and a fail-closed session→bearer proxy with coalesced token refresh |
 | [`socrate`](#socrate) | Full Socrate API client: user CRUD, service-account token, magic links, invite, app & superadmin management, security monitoring, dashboard, audit logs, token introspection/revocation |
 | [`tiering`](#tiering) | Plan registry, tier gate middleware, feature policy model and service |
 | [`pep`](#pep) | Policy enforcement point: asks Socrate's policy decision point about each action and honours the central `POLICY_MODE` (off / shadow / enforce) and obligations |
 | [`aigateway`](#aigateway) | Multi-provider AI client (OpenAI + Claude), `ExtractJSON`/`ExtractJSONInto` |
+| [`ailang`](#ailang) | Language guard for AI output: every response is in the requested locale (fr/en), with retry and translation fallback |
 | [`ainarration`](#ainarration) | Generic LRU+TTL narration cache and `CacheKey` helper |
 | [`pagination`](#pagination) | Query-param parsing and `PagedResponse` |
 | [`buildinfo`](#buildinfo) | Build-time version metadata (`-ldflags`) and a `/version` HTTP handler |
@@ -156,6 +160,7 @@ Packages are independent — `go get` pulls the whole module, but importing one 
 | I want to… | Use |
 |------------|-----|
 | Validate incoming Socrate JWTs and populate the request context | [`jwtauth`](#jwtauth) |
+| Serve a browser SPA without ever giving it OAuth tokens (BFF) | [`bff`](#bff) + [`socrate`](#socrate) |
 | Read the tenant / user / role / plan of the current request | [`ctxutil`](#ctxutil) |
 | Add request IDs, structured logging, panic recovery, timeouts, body limits, security headers | [`httpware`](#httpware) |
 | Rate-limit per tenant | [`httpware.RateLimiter`](#httpware) |
@@ -167,6 +172,7 @@ Packages are independent — `go get` pulls the whole module, but importing one 
 | Return consistent JSON errors | [`apierror`](#apierror) |
 | Call Socrate to manage users, apps, tokens, or security | [`socrate`](#socrate) |
 | Call OpenAI or Claude through one interface | [`aigateway`](#aigateway) |
+| Guarantee AI output is in the user's language | [`ailang`](#ailang) |
 | Cache AI results to cut latency and cost | [`ainarration`](#ainarration) |
 | Parse `?page`/`?per_page` and return paged lists | [`pagination`](#pagination) |
 | Log GORM queries through logrus / flag slow queries | [`gormlogger`](#gormlogger) |
@@ -567,6 +573,91 @@ check needs; `pep` uses them to honour policy obligations.
 
 ---
 
+### bff
+
+The runtime of a Backend-for-Frontend. In a BFF the browser never holds OAuth tokens: the BFF is
+the confidential client, runs Authorization Code + PKCE server-side, keeps the tokens in a
+server-side session and gives the browser only an opaque `HttpOnly` cookie. The token calls
+themselves come from the [`socrate`](#socrate) package — `*socrate.Client` is the gateway's
+refresher. The Socrate admin and monitoring consoles run on this package.
+
+```go
+client, err := socrate.NewClient(socrate.ClientConfig{
+	BaseURL: "https://socrate.example.com", ClientID: "my-bff", ClientSecret: "…",
+})
+if err != nil {
+	log.Fatal(err)
+}
+
+store := bff.NewMemoryStore(30*time.Minute, 8*time.Hour) // idle, absolute; call store.Sweep() on a ticker
+gw := &bff.Gateway{
+	Store:     store,
+	Cookie:    bff.CookieConfig{Name: "app_session", Secure: true}, // sent as __Host-app_session
+	Refresher: client,                                             // *socrate.Client refreshes the tokens
+}
+login := bff.LoginBinding{Cookie: bff.CookieConfig{Name: "app_login", Secure: true}}
+
+// The browser starts here; it never sees a token.
+mux.HandleFunc("/bff/login", func(w http.ResponseWriter, r *http.Request) {
+	p, state := bff.NewPKCE(), bff.RandomToken(32)
+	pending[state] = pendingLogin{
+		Verifier: p.Verifier,
+		Nonce:    login.Begin(w), // ties the callback to this browser
+		ReturnTo: bff.SanitizeReturnTo(r.URL.Query().Get("return_to")),
+	}
+	q := url.Values{
+		"response_type": {"code"}, "client_id": {"my-bff"}, "redirect_uri": {redirectURI},
+		"scope": {"openid profile email"}, "state": {state},
+		"code_challenge": {p.Challenge}, "code_challenge_method": {"S256"},
+	}
+	http.Redirect(w, r, "https://socrate.example.com/oauth/authorize?"+q.Encode(), http.StatusFound)
+})
+
+mux.HandleFunc("/bff/callback", func(w http.ResponseWriter, r *http.Request) {
+	st, ok := pending[r.URL.Query().Get("state")]
+	delete(pending, r.URL.Query().Get("state"))
+	if !ok || !login.Verify(w, r, st.Nonce) {
+		http.Error(w, "invalid login", http.StatusBadRequest)
+		return
+	}
+	ts, err := client.ExchangeCode(r.Context(), r.URL.Query().Get("code"), redirectURI, st.Verifier)
+	if err != nil {
+		http.Error(w, "login failed", http.StatusBadGateway)
+		return
+	}
+	s := bff.NewSession(bff.RandomToken(32), bff.RandomToken(32), ts, bff.UserInfo{ /* from the token claims */ }, time.Now())
+	store.Put(s)
+	gw.Cookie.SetSession(w, s.ID())
+	http.Redirect(w, r, st.ReturnTo, http.StatusFound)
+})
+
+// Every API call: session cookie in, bearer out. No valid session ⇒ 401, never a pass-through.
+// Unsafe methods must carry the session's CSRF token in X-CSRF-Token.
+mux.HandleFunc("/api/", gw.ProxyWithSession(bff.NewSingleHostProxy(apiURL)))
+```
+
+`pending` stands for any server-side store of `{Verifier, Nonce, ReturnTo}` keyed by `state`, with
+a short expiry. [`oauth2-admin/bff`](https://github.com/ovander/oauth2-admin/tree/main/bff) is a
+complete production BFF built this way.
+
+**Safe by default.**
+
+| Concern | Behaviour |
+|---|---|
+| No or expired session | `ProxyWithSession` answers **401**; it never forwards the request (opt-out: `AllowPassthrough`) |
+| CSRF | Unsafe methods need the session's token in `X-CSRF-Token` (constant-time compare), else **403** |
+| Cookie | `HttpOnly`, and `__Host-` prefixed when `Secure` |
+| Login CSRF / session swap | `LoginBinding` accepts a callback only from the browser that started the login |
+| Open redirect | `SanitizeReturnTo` keeps only same-site paths such as `/dashboard?x=1`; absolute URLs, `//host`, backslash and control-character tricks all become `/` |
+| Token refresh | Proactive, coalesced per session, detached from the triggering request, and written through to the store so the rotated refresh token is kept. Only a refresh the server rejects (`IsFatalRefreshError`) ends the session; a transient failure answers 502 and keeps it |
+| Upstream attribution | `NewSingleHostProxy` strips client-supplied `X-Forwarded-For` and similar headers, so the browser cannot steer Socrate's rate limits, IP blocks or audit trail |
+
+**Several instances.** `MemoryStore` is per process. Behind a load balancer, implement
+`SessionStore` (`Get`, `Put`, `Delete`, `Sweep`) over a shared database, serialising sessions
+with `Session.Snapshot` / `NewSessionFromSnapshot`.
+
+---
+
 ### pep
 
 The policy enforcement point for Socrate's policy decision point (Socrate A4).
@@ -715,6 +806,28 @@ err = aigateway.ExtractJSONInto(result, &data) // or ExtractJSON(result) for the
 Set `Config.AllowedModels` to restrict which Claude models may be used; a call with an out-of-list model returns an error. `Client.IsConfigured()` reports whether an API key is present (handy for feature-flagging AI endpoints), and `Client.Provider()` returns the configured provider name.
 
 For tests, `aigateway.ClientForTest(provider, apiKey, serverURL)` points both provider base URLs at an `httptest.Server` so AI-dependent handlers can be exercised without a live API key.
+
+---
+
+### ailang
+
+A language guard for AI output: every `AIResponse.Text` is in the requested locale (`fr` or
+`en`). It prepends a language directive to the prompt, checks the answer with a fast stopword
+heuristic, retries once with a reinforced prompt, and as a last resort translates the answer with
+the same model.
+
+```go
+guard := ailang.New(aiClient, ailang.DefaultAIConfig(), nil, logger) // aiClient: *aigateway.Client; nil reporter = no-op
+
+resp, err := guard.Generate(ctx, ailang.PromptInput{
+    Prompt:   "Explique les résultats du plan.",
+    Locale:   "fr",
+    Metadata: map[string]any{"module": "insight"},
+})
+```
+
+Mismatches, retries and translation fallbacks are reported through the optional `EventReporter`
+(for example a Sentry adapter), so language drift is observable rather than silent.
 
 ---
 
@@ -869,4 +982,21 @@ go vet ./...         # static analysis
 3. Add runnable examples in `example_test.go` — they appear on pkg.go.dev.
 4. All exported symbols must have Go doc comments that begin with the symbol name.
 5. Run `go test -race ./...` and `go vet ./...` before opening a PR.
-6. Keep packages decoupled — the only allowed cross-package imports within the library are `ctxutil` and `apierror` (shared primitives). All other cross-package imports are prohibited.
+6. Keep packages loosely coupled — every package may use the shared `ctxutil` and `apierror` primitives; beyond those, the only intra-module imports are `bff` → `socrate`, `pep` → `socrate` and `aigateway` → `ailang`. Discuss any new one first.
+
+The full workflow — required checks, commit style, changelog and pull-request template — is in
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
+---
+
+## Security
+
+Please report vulnerabilities privately through the repository's **Security** tab → **Report a
+vulnerability**, not in a public issue. Scope and supported versions are in
+[SECURITY.md](SECURITY.md).
+
+---
+
+## License
+
+backendkit is licensed under the [Apache License 2.0](LICENSE).

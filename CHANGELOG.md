@@ -11,6 +11,12 @@ build toolchain. Both purely additive for consumers.
 
 ### Added
 
+- **Apache-2.0 licence** (`LICENSE`) and the contributor kit: `CONTRIBUTING.md`, `SECURITY.md`
+  (private vulnerability reporting, scope, supported versions), `CLAUDE.md`, `CODEOWNERS`, issue
+  forms and a pull-request template.
+- **README package reference for `bff` and `ailang`**, which had none, with examples that compile
+  against the module.
+
 - **`pep` package** — the policy enforcement point for Socrate's policy
   decision point. `Enforcer.Middleware` gates a route on an action,
   `Enforcer.Check` decides object-level inside a handler, `WriteDenial` writes
@@ -43,6 +49,18 @@ build toolchain. Both purely additive for consumers.
 - **golangci-lint v2.5.0 → v2.14.0** in CI (still built with the job's
   toolchain). v2.5.0 cannot load Go 1.27's export data; v2.14.0 reports no
   issues on this module.
+
+### Fixed
+
+- README and `docs/CLIENT-INTEGRATION.md` linked Socrate to a repository that does not exist;
+  they now point to `ovander/go-oauth2`. The README's contributing rule on cross-package imports
+  now matches the code (`bff`/`pep` → `socrate`, `aigateway` → `ailang`).
+
+### Removed
+
+- The internal review documents (`CTO-ARCHITECTURE-REVIEW.md`, `FRAMEWORK-EVOLUTION.md`,
+  `SECURITY-ARCHITECTURE.md`, `SECURITY-AUDIT.md`) left the public tree. The fixes they led to
+  remain listed below with their finding IDs.
 
 ## [1.13.0] - 2026-09-04
 

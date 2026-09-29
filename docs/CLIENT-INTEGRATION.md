@@ -1,7 +1,7 @@
 # Socrate + backendkit — Client Integration Guide
 
 A practical, end-to-end guide for **application teams** integrating with the
-[Socrate](https://github.com/ovander/socrate) OAuth 2.0 / OpenID Connect server
+[Socrate](https://github.com/ovander/go-oauth2) OAuth 2.0 / OpenID Connect server
 through the `backendkit` library.
 
 It is written for two audiences working on the same product:

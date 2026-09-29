@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/ovander/backendkit/security/advisories/new
+    about: Report privately; please do not open a public issue.
+  - name: Problem with the Socrate server itself
+    url: https://github.com/ovander/go-oauth2/issues
+    about: Issues in the identity provider belong in ovander/go-oauth2.
