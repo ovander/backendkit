@@ -1,0 +1,58 @@
+name: Bug report
+description: A backendkit package does not behave as documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. For a security vulnerability, do **not** open an issue: use the
+        Security tab → Report a vulnerability.
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions
+      description: Output of `go list -m github.com/ovander/backendkit` and `go version`.
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: package
+    attributes:
+      label: Package
+      options:
+        - jwtauth
+        - bff
+        - pep
+        - socrate
+        - httpware
+        - tiering
+        - apierror
+        - ctxutil
+        - gormlogger
+        - aigateway
+        - ailang
+        - ainarration
+        - pagination
+        - buildinfo
+        - other / several
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: A short Go snippet or test that shows the problem.
+      render: go
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Logs, errors, Socrate version
+      description: Remove tokens, secrets and personal data before pasting.
