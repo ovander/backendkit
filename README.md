@@ -963,7 +963,7 @@ however you like in your own service.
 | `SOCRATE_JWKS_URL` | `jwtauth.New` | JWKS endpoint used to validate RS256 signatures, e.g. `https://socrate.example.com/.well-known/jwks.json` |
 | `SOCRATE_ISSUER` | `jwtauth.New` | Expected `iss` claim — optional; enforced only when non-empty (an empty value logs a warning at startup) |
 | `SOCRATE_BASE_URL` | `socrate.NewClient` | Socrate OAuth port base URL (e.g. `https://socrate.example.com`) |
-| `SOCRATE_ADMIN_BASE_URL` | `socrate.NewClient` | Socrate admin API base URL — optional; derived from `SOCRATE_BASE_URL` with port 8081 when empty |
+| `SOCRATE_ADMIN_BASE_URL` | `socrate.NewClient` | Socrate admin API base URL, e.g. `http://127.0.0.1:8081` (the server's `ADMIN_PORT`; 8082 where a legacy server holds 8081). Set it in production: the value derived from `SOCRATE_BASE_URL` (port 8081, same scheme and host) is wrong behind a TLS proxy |
 | `SOCRATE_CLIENT_ID` | `socrate.NewClient`, `jwtauth.WithAudience` | OAuth client ID |
 | `SOCRATE_CLIENT_SECRET` | `socrate.NewClient` | Client secret — required for service-account calls, `Decide`, `RevokeToken`, `IntrospectToken` and a BFF's token exchange |
 | `SOCRATE_APP_ID` | `socrate.NewClient` | Pre-resolved numeric app ID — **required** for every service-account method, including `Decide` |
