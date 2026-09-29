@@ -20,9 +20,8 @@ they are ready, and the report is credited in the release notes unless you prefe
 - In scope: the packages in this repository, in particular `jwtauth` (token verification and
   JWKS handling), `bff` (sessions, cookies, CSRF, PKCE, the session→bearer proxy), `pep`,
   `socrate` and `httpware`.
-- Out of scope: the Socrate identity provider itself (report those in
-  [`ovander/go-oauth2`](https://github.com/ovander/go-oauth2)), flaws in an application's own
-  code or configuration, and denial-of-service by volume.
+- Out of scope: the Socrate identity provider itself (`ovander/go-oauth2`, not public yet), flaws
+  in an application's own code or configuration, and denial-of-service by volume.
 
 ## Supported versions
 
@@ -31,5 +30,19 @@ backward-compatible.
 
 ## Past reviews
 
-The library has been through internal security and architecture reviews. The fixes they led to
-are listed in [`CHANGELOG.md`](CHANGELOG.md), with the finding IDs they close (`F-n`, `INV-n`).
+The library has been through internal security and architecture reviews. The controls they led
+to include:
+
+- **Token verification (`jwtauth`):** optional audience and revocation checks, a required `exp`
+  with bounded clock-skew leeway, a 2048-bit minimum for JWKS keys, and a JWKS refetch that is
+  coalesced, rate-limited and negatively cached so unknown key IDs cannot force a fetch per
+  request.
+- **Sessions (`bff`):** a fail-closed zero value, CSRF that never matches an empty token, token
+  refresh coalesced per session and detached from the triggering request, login binding against
+  login CSRF, and stripping of client-supplied IP-attribution headers.
+- **Upstream calls (`socrate`, `aigateway`):** capped response reads and escaped path and query
+  values.
+- **Error and log output (`apierror`, `gormlogger`):** 5xx responses redacted, and SQL values
+  kept out of logs with `WithSQLRedaction`.
+
+Each fix is listed in [CHANGELOG.md](CHANGELOG.md) with the version that shipped it.
