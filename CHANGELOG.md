@@ -6,6 +6,13 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-09-29
+
+Minor release on the **v1** line: no breaking change to any exported identifier. It adds the
+`pep` package (enforcing Socrate's central policy decisions), `socrate.Client.Decide`, and the
+`auth_time` / `amr` claims in `jwtauth`; moves the toolchain to Go 1.27.1; and brings the licence
+(Apache-2.0), the contributor kit and the documentation to the suite's standard.
+
 Policy enforcement for applications against Socrate's central policy decision
 point, and a patched build toolchain. Both purely additive for consumers.
 
@@ -392,7 +399,8 @@ are rejected. Confirm your Socrate server populates `aud` before enabling it in
 production. Making audience validation required-by-default is deferred to a future
 major (v2.0) and tracked separately.
 
-[Unreleased]: https://github.com/ovander/backendkit/compare/v1.13.0...HEAD
+[Unreleased]: https://github.com/ovander/backendkit/compare/v1.14.0...HEAD
+[1.14.0]: https://github.com/ovander/backendkit/compare/v1.13.0...v1.14.0
 [1.13.0]: https://github.com/ovander/backendkit/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/ovander/backendkit/compare/v1.11.1...v1.12.0
 [1.11.1]: https://github.com/ovander/backendkit/compare/v1.11.0...v1.11.1
