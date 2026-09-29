@@ -39,6 +39,7 @@ point, and a patched build toolchain. Both purely additive for consumers.
 
 ### Changed
 
+- README: a row of self-updating badges (CI status, licence, Go version) under the title.
 - **Documentation uplift:** the README, `docs/CLIENT-INTEGRATION.md` (new BFF and `pep`
   sections; a BFF is now the recommended path for browser apps), `SECURITY.md`, `CONTRIBUTING.md`
   and the GitHub templates follow the Socrate suite's documentation standard.

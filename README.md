@@ -2,6 +2,9 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/ovander/backendkit.svg)](https://pkg.go.dev/github.com/ovander/backendkit)
 [![CI](https://github.com/ovander/backendkit/actions/workflows/ci.yml/badge.svg)](https://github.com/ovander/backendkit/actions/workflows/ci.yml)
+[![Latest tag](https://img.shields.io/github/v/tag/ovander/backendkit?sort=semver&label=version)](https://github.com/ovander/backendkit/tags)
+[![License: Apache-2.0](https://img.shields.io/github/license/ovander/backendkit)](LICENSE)
+[![Go version](https://img.shields.io/github/go-mod/go-version/ovander/backendkit)](go.mod)
 
 > The shared Go library for services and Backend-for-Frontends that sign users in with Socrate.
 
