@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+
+	"github.com/ovander/backendkit/ctxutil"
 )
 
 // ErrMagicLinkAlreadyUsed is returned by VerifyMagicLink when the single-use
@@ -80,13 +82,16 @@ type LoginResult struct {
 	MustChangePassword bool              `json:"must_change_password,omitempty"`
 }
 
-// postForm sends an application/x-www-form-urlencoded POST to fullURL.
+// postForm sends an application/x-www-form-urlencoded POST to fullURL. It is
+// used only for grants made on a user's behalf (authorization_code,
+// refresh_token), so it applies the ClientAttribution in ctx, if any.
 func (c *Client) postForm(ctx context.Context, fullURL string, data url.Values) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, bytes.NewBufferString(data.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("build form request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	ApplyClientAttribution(req)
 	return c.httpClient.Do(req)
 }
 
@@ -208,9 +213,21 @@ func (c *Client) AdminLogin(ctx context.Context, email, password string) (*Login
 }
 
 // Logout invalidates the caller's current session/token server-side. Maps to
-// POST /api/auth/logout and forwards the user JWT from context.
+// POST /api/auth/logout and forwards the user JWT from context, with the
+// ClientAttribution in ctx, if any.
 func (c *Client) Logout(ctx context.Context) error {
-	resp, err := c.doWithJWT(ctx, http.MethodPost, c.oauthURL("/api/auth/logout"), nil)
+	jwt := ctxutil.GetRawJWT(ctx)
+	if jwt == "" {
+		return errors.New("socrate: no JWT in context — use WithJWT or jwtauth.Middleware")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.oauthURL("/api/auth/logout"), nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	req.Header.Set("Content-Type", "application/json")
+	ApplyClientAttribution(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -218,7 +235,9 @@ func (c *Client) Logout(ctx context.Context) error {
 }
 
 // doHTTPNoAuth sends a JSON request without an Authorization header — for the
-// public token/login endpoints that authenticate via the body instead.
+// public token/login endpoints that authenticate via the body instead. Those
+// are logins made on a user's behalf (VerifyMagicLink, AdminLogin), so it
+// applies the ClientAttribution in ctx, if any.
 func (c *Client) doHTTPNoAuth(ctx context.Context, method, fullURL string, body interface{}) (*http.Response, error) {
 	var reader *bytes.Reader
 	if body != nil {
@@ -235,5 +254,6 @@ func (c *Client) doHTTPNoAuth(ctx context.Context, method, fullURL string, body 
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	ApplyClientAttribution(req)
 	return c.httpClient.Do(req)
 }

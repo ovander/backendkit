@@ -6,6 +6,22 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Added
+
+- **Client attribution for OAuth calls made on a user's behalf** (`socrate`, `bff`; opt-in,
+  additive). `socrate.ClientAttribution`, `socrate.WithClientAttribution`,
+  `socrate.ClientAttributionFrom` and `socrate.ApplyClientAttribution` carry the browser's
+  address and User-Agent on the context; `ExchangeCode`, `RefreshToken`, `RevokeToken`,
+  `VerifyMagicLink`, `AdminLogin` and `Logout` then send them as `X-Forwarded-For` and
+  `User-Agent`, so Socrate (v1.5.0+) audits, rate-limits and blocks by the browser rather than
+  the BFF's loopback address. `X-Forwarded-For` is replaced with the single address, never
+  appended to (Socrate reads the leftmost entry), `X-Real-IP` is removed, an unparsable address
+  sends nothing, and the User-Agent is stripped of control characters and capped at 512 bytes.
+  The `client_credentials` grant, introspection and userinfo never carry it.
+  `bff.WithClientAttribution(r, ip)` sets it from an incoming request; the gateway's refresh path
+  already keeps the request context's values, so the refresh is attributed too. The caller
+  resolves the IP; backendkit never reads it from headers. Without attribution on the context, requests are unchanged.
+
 ## [1.14.0] - 2026-09-29
 
 Minor release on the **v1** line: no breaking change to any exported identifier. It adds the

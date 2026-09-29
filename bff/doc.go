@@ -31,5 +31,7 @@
 // IP-attribution headers so the upstream's rate limits, IP blocks and audit
 // trail cannot be steered by the browser, and [LoginBinding] ties a pending
 // login to the browser that started it so a captured callback URL cannot
-// swap a victim onto an attacker's session.
+// swap a victim onto an attacker's session. [WithClientAttribution] lets the
+// token calls (code exchange, refresh, revocation) tell Socrate which browser
+// they are made for, from an address the BFF resolved itself.
 package bff
