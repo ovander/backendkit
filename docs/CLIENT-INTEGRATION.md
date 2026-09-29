@@ -134,7 +134,7 @@ guide:
 | `SOCRATE_JWKS_URL` | `jwtauth.New` | JWKS endpoint, e.g. `https://socrate.example.com/.well-known/jwks.json` |
 | `SOCRATE_ISSUER` | `jwtauth.New` | Expected `iss` claim — optional but recommended in production |
 | `SOCRATE_BASE_URL` | `socrate.NewClient` | OAuth (public) port base URL, e.g. `https://socrate.example.com` |
-| `SOCRATE_ADMIN_BASE_URL` | `socrate.NewClient` | Admin API base URL — optional; derived from `BaseURL` with port 8081 (the default deployment's admin port) if omitted |
+| `SOCRATE_ADMIN_BASE_URL` | `socrate.NewClient` | Admin API base URL, e.g. `http://127.0.0.1:8081`. Set it in production: when empty it is derived from `BaseURL` with port 8081, which is wrong behind a TLS proxy (§6.3) |
 | `SOCRATE_CLIENT_ID` | `socrate.NewClient` | Your app's OAuth client ID |
 | `SOCRATE_CLIENT_SECRET` | `socrate.NewClient` | Client secret — required for service-account calls, `Decide`, `RevokeToken`, `IntrospectToken` and a BFF's token exchange |
 | `SOCRATE_APP_ID` | `socrate.NewClient` | Pre-resolved numeric app ID — **required** for every service-account method |
@@ -302,7 +302,7 @@ client, err := socrate.NewClient(socrate.ClientConfig{
 	ClientID:     os.Getenv("SOCRATE_CLIENT_ID"),      // required
 	ClientSecret: os.Getenv("SOCRATE_CLIENT_SECRET"),  // service-account / introspect / revoke
 	AppID:        os.Getenv("SOCRATE_APP_ID"),          // required for service-account calls
-	// AdminBaseURL: "https://socrate.example.com:8081", // optional; derived from BaseURL if empty
+	AdminBaseURL: os.Getenv("SOCRATE_ADMIN_BASE_URL"), // e.g. http://127.0.0.1:8081 — see §6.3
 	// Timeout:      30 * time.Second,                   // optional; default 30s
 })
 if err != nil {
@@ -365,9 +365,23 @@ URLs yourself:
   everything else — app-user management, app management, superadmins,
   security, dashboard, audit logs, magic links, policy decisions.
 
-`AdminBaseURL` defaults to `BaseURL` with the host port replaced by `8081`.
-Set it explicitly when your deployment differs, for example when the admin API
-listens on another host or port.
+`AdminBaseURL` defaults to `BaseURL` with the host port replaced by `8081`,
+keeping its scheme and host. That default only fits a Socrate reached directly,
+with both ports on one host. **Set `AdminBaseURL` explicitly in production:**
+
+- Behind a TLS reverse proxy (the usual layout), `BaseURL` is the public issuer,
+  e.g. `https://socrate.example.com`, and the derived
+  `https://socrate.example.com:8081` is wrong: the admin API is plain HTTP bound
+  to loopback (`ADMIN_BIND_HOST=127.0.0.1`), not published by the proxy. Use
+  `http://127.0.0.1:<ADMIN_PORT>` from a service on the same host.
+- The port is the server's `ADMIN_PORT`: 8081 by default, but a host that runs
+  another service on 8081 moves it — the layout that co-hosts Socrate with a
+  legacy server uses **8082**. Read it from the server's environment file rather
+  than assuming 8081; a wrong port can reach a different service.
+- A backend on another host cannot reach a loopback-bound admin API at all. It
+  can still validate tokens (JWKS) and use the OAuth-port methods; admin, app-user
+  and policy calls need the backend on the Socrate host, or an admin API bound
+  to a private interface and firewalled to that backend.
 
 ### 6.4 Method reference
 

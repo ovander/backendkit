@@ -19,7 +19,10 @@
 //	8081 — Admin API (internal; restrict at network level)
 //	         /api/admin/*, /api/apps/{id}/users/*, /api/apps/{id}/service/*
 //
-// AdminBaseURL defaults to BaseURL with the host port replaced by 8081.
+// AdminBaseURL defaults to BaseURL with the host port replaced by 8081, keeping
+// its scheme and host. Behind a TLS reverse proxy that default is wrong (the admin
+// API is plain HTTP on loopback, on the server's ADMIN_PORT), so production
+// callers set it explicitly, e.g. http://127.0.0.1:8081.
 // All user-management and admin calls are routed to AdminBaseURL automatically.
 package socrate
 
@@ -70,7 +73,7 @@ type Client struct {
 // ClientConfig holds the constructor options for Client.
 type ClientConfig struct {
 	BaseURL      string        // OAuth port URL  (e.g. https://auth.example.com)
-	AdminBaseURL string        // Admin port URL  (e.g. https://auth.example.com:8081); derived from BaseURL if empty
+	AdminBaseURL string        // Admin port URL (e.g. http://127.0.0.1:8081); derived from BaseURL (port 8081) if empty — set it behind a TLS proxy
 	ClientID     string        // OAuth client ID
 	ClientSecret string        // OAuth client secret (required for service-account calls)
 	AppID        string        // Pre-resolved numeric app ID; skips runtime resolution when set

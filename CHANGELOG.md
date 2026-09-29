@@ -6,6 +6,15 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Changed
+
+- Docs: `socrate.ClientConfig.AdminBaseURL` is documented as required in production. The value
+  derived when it is empty (`BaseURL` with port 8081, same scheme and host) is wrong behind a
+  TLS reverse proxy, where the admin API is plain HTTP on loopback; the integration guide, the
+  README and the package doc now say to set it (e.g. `http://127.0.0.1:8081`), to read the port
+  from the server's `ADMIN_PORT` (8082 in the layout that co-hosts a legacy server on 8081),
+  and what a backend on another host can and cannot call. No code change.
+
 ## [1.15.0] - 2026-09-29
 
 Minor release on the **v1** line: no breaking change to any exported identifier. It adds opt-in
