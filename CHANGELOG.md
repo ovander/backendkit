@@ -6,6 +6,13 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+## [1.15.1] - 2026-09-30
+
+Patch release on the **v1** line: no change to any exported identifier. `socrate.Client.RegisterUser`
+and `GetUserAsService` call Socrate's service-account routes and work with a service-account token.
+`GetUserAsService` needs Socrate v1.6.0 or later; against an older server it returns an error, never
+a silent "not found".
+
 ### Fixed
 
 - **`socrate.Client.RegisterUser` and `GetUserAsService` call the service-account routes.** They
@@ -442,7 +449,8 @@ are rejected. Confirm your Socrate server populates `aud` before enabling it in
 production. Making audience validation required-by-default is deferred to a future
 major (v2.0) and tracked separately.
 
-[Unreleased]: https://github.com/ovander/backendkit/compare/v1.15.0...HEAD
+[Unreleased]: https://github.com/ovander/backendkit/compare/v1.15.1...HEAD
+[1.15.1]: https://github.com/ovander/backendkit/compare/v1.15.0...v1.15.1
 [1.15.0]: https://github.com/ovander/backendkit/compare/v1.14.0...v1.15.0
 [1.14.0]: https://github.com/ovander/backendkit/compare/v1.13.0...v1.14.0
 [1.13.0]: https://github.com/ovander/backendkit/compare/v1.12.0...v1.13.0
