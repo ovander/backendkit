@@ -6,6 +6,17 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Fixed
+
+- **`socrate.Client.RegisterUser` and `GetUserAsService` call the service-account routes.** They
+  sent a service-account token to `/api/apps/{id}/users…`, routes that need an app admin's user
+  token, so Socrate answered `401` and neither method worked. `RegisterUser` now posts to
+  `/api/apps/{id}/service/users` (the route `InviteUserAsService` uses; `Name` is still sent).
+  `GetUserAsService` now reads `GET /api/apps/{id}/service/users/{user_id}`, added in the
+  Socrate release after v1.5.3. It returns nil, nil only for Socrate's own 404 (not a member, or no such user); a Socrate
+  without the route answers with an error that names the version, never a silent "not found". No
+  exported identifier changes.
+
 ### Changed
 
 - Docs: `socrate.ClientConfig.AdminBaseURL` is documented as required in production. The value
