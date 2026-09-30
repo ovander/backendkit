@@ -230,7 +230,7 @@ func TestGetServiceToken_ExchangesCredentials(t *testing.T) {
 			Apps: []socrate.App{{ID: 5, ClientID: "cid"}},
 		})
 	})
-	mux.HandleFunc("/api/apps/5/users/7", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/apps/5/service/users/7", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(socrate.User{ID: 7, Email: "svc@x.com"})
 	})
 	srv, close := newTestServer(mux)

@@ -230,6 +230,15 @@ func (c *Client) getAppIDAsService(ctx context.Context) (string, error) {
 	return c.parseAppID(resp)
 }
 
+// isSocrateErrorBody reports whether b is a Socrate handler's JSON error
+// ({"error": "..."}), as opposed to a router's plain "404 page not found".
+func isSocrateErrorBody(b []byte) bool {
+	var e struct {
+		Error *string `json:"error"`
+	}
+	return json.Unmarshal(b, &e) == nil && e.Error != nil
+}
+
 func (c *Client) parseAppID(resp *http.Response) (string, error) {
 	b, err := readBody(resp)
 	if err != nil {
@@ -598,15 +607,19 @@ func (c *Client) ForcePasswordReset(ctx context.Context, userID string) error {
 // User management — service-account methods  (Admin port)
 // ────────────────────────────────────────────────────────────────────────────
 
-// GetUserAsService retrieves a user by numeric ID using the service-account token.
-// Returns nil, nil when the user is not found (404).
+// GetUserAsService retrieves one of the app's members by numeric ID using the
+// service-account token, via GET /api/apps/{id}/service/users/{user_id}
+// (Socrate later than v1.5.3). Returns nil, nil when the user is not a member
+// of the app or does not exist (404). A Socrate without that route answers
+// with an error rather than nil, nil, so a missing route is never mistaken
+// for a missing user.
 func (c *Client) GetUserAsService(ctx context.Context, userID string) (*User, error) {
 	appID, err := c.getAppIDAsService(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("resolve app ID: %w", err)
 	}
 	resp, err := c.doWithServiceToken(ctx, http.MethodGet,
-		c.adminURL(fmt.Sprintf("/api/apps/%s/users/%s", appID, url.PathEscape(userID))), nil)
+		c.adminURL(fmt.Sprintf("/api/apps/%s/service/users/%s", appID, url.PathEscape(userID))), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -615,6 +628,10 @@ func (c *Client) GetUserAsService(ctx context.Context, userID string) (*User, er
 		return nil, err
 	}
 	if resp.StatusCode == http.StatusNotFound {
+		if !isSocrateErrorBody(b) {
+			return nil, fmt.Errorf("get user HTTP 404 without a Socrate error body: "+
+				"GET /api/apps/{id}/service/users/{user_id} needs a Socrate later than v1.5.3: %s", b)
+		}
 		return nil, nil
 	}
 	if resp.StatusCode != http.StatusOK {
@@ -627,7 +644,8 @@ func (c *Client) GetUserAsService(ctx context.Context, userID string) (*User, er
 	return &u, nil
 }
 
-// RegisterUser creates a user and adds them to the app using the service-account token.
+// RegisterUser creates a user and adds them to the app using the service-account token,
+// via POST /api/apps/{id}/service/users. Unlike InviteUserAsService it also sends Name.
 // Socrate dispatches an invite email automatically.
 // Returns ErrUserAlreadyExists on 409.
 func (c *Client) RegisterUser(ctx context.Context, req CreateUserRequest) (*CreateUserResult, error) {
@@ -636,7 +654,7 @@ func (c *Client) RegisterUser(ctx context.Context, req CreateUserRequest) (*Crea
 		return nil, fmt.Errorf("resolve app ID: %w", err)
 	}
 	resp, err := c.doWithServiceToken(ctx, http.MethodPost,
-		c.adminURL(fmt.Sprintf("/api/apps/%s/users", appID)), req)
+		c.adminURL(fmt.Sprintf("/api/apps/%s/service/users", appID)), req)
 	if err != nil {
 		return nil, err
 	}

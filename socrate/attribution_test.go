@@ -159,7 +159,7 @@ func newAttributionServer(t *testing.T) *attributionServer {
 			_ = json.NewEncoder(w).Encode(socrate.ProfileInfo{Sub: "7"})
 		case "/oauth/introspect":
 			_ = json.NewEncoder(w).Encode(socrate.IntrospectResponse{Active: true})
-		case "/api/apps/42/users/7":
+		case "/api/apps/42/service/users/7":
 			_ = json.NewEncoder(w).Encode(socrate.User{ID: 7})
 		default:
 			http.NotFound(w, r)
@@ -278,7 +278,7 @@ func TestNonUserCallsNeverSendAttribution(t *testing.T) {
 	if _, err := c.GetCurrentUserProfile(ctx); err != nil {
 		t.Fatalf("GetCurrentUserProfile: %v", err)
 	}
-	for _, key := range []string{"/oauth/token#client_credentials", "/api/apps/42/users/7", "/oauth/introspect", "/oauth/userinfo"} {
+	for _, key := range []string{"/oauth/token#client_credentials", "/api/apps/42/service/users/7", "/oauth/introspect", "/oauth/userinfo"} {
 		got := srv.last(t, key)
 		if got.hasXFF || got.ua != "Go-http-client/1.1" {
 			t.Errorf("%s carried attribution: XFF=%q UA=%q", key, got.xff, got.ua)

@@ -430,8 +430,8 @@ automatically from `client_id` (cached).
 | `DeleteUser(ctx, userID)` | JWT | `error` | removes the user's role in this app. |
 | `ResendVerification(ctx, userID)` | JWT | `error` | re-sends the verification email. |
 | `ForcePasswordReset(ctx, userID)` | JWT | `error` | triggers a password-reset email. |
-| `GetUserAsService(ctx, userID)` | M2M | `*User` | service-account variant; **nil,nil** on 404. |
-| `RegisterUser(ctx, CreateUserRequest)` | M2M | `*CreateUserResult` | M2M create+invite; `ErrUserAlreadyExists` on 409. |
+| `GetUserAsService(ctx, userID)` | M2M | `*User` | one of the app's members by numeric id (a token's `sub`); **nil,nil** when not a member (Socrate's 404). Needs a Socrate later than v1.5.3; an older one answers with an error, not nil,nil. |
+| `RegisterUser(ctx, CreateUserRequest)` | M2M | `*CreateUserResult` | M2M create+invite, with `Name`; `ErrUserAlreadyExists` on 409. |
 | `InviteUserAsService(ctx, ServiceInviteRequest)` | M2M | `*CreateUserResult` | dedicated M2M invite route; no human JWT needed. |
 
 #### Passwordless — Admin port
@@ -1184,8 +1184,8 @@ port (8081 in the default deployment).
 | `ListUsers` / `GetUser` / `CreateUser` | `…/api/apps/{id}/users` | JWT | Admin |
 | `UpdateUserRole` / `DeleteUser` | `…/api/apps/{id}/users/{uid}` | JWT | Admin |
 | `ResendVerification` / `ForcePasswordReset` | `…/users/{uid}/…` | JWT | Admin |
-| `RegisterUser` / `GetUserAsService` | `…/api/apps/{id}/users…` | M2M | Admin |
-| `InviteUserAsService` | `POST …/api/apps/{id}/service/users` | M2M | Admin |
+| `RegisterUser` / `InviteUserAsService` | `POST …/api/apps/{id}/service/users` | M2M | Admin |
+| `GetUserAsService` | `GET …/api/apps/{id}/service/users/{uid}` | M2M | Admin |
 | `SendMagicLink` | `POST …/api/apps/{id}/service/magic-link` | M2M | Admin |
 | `ListApps` … `RotateSecret` | `…/api/admin/apps…` | JWT (admin) | Admin |
 | `AdminListUsers` … `RevokeUserTokens` | `…/api/admin/users…` | JWT (superadmin) | Admin |
