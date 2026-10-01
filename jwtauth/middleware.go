@@ -209,6 +209,9 @@ func WithNegativeCacheTTL(d time.Duration) Option {
 //
 // When issuer is empty the iss claim is not enforced; New logs a warning at
 // construction so the disabled check is visible at startup rather than silent.
+// It does the same when no WithAudience option is given: without it a token
+// issued to another application on the same Socrate validates here, and its
+// role claim (the user's role in that application) is trusted.
 func New(jwksURL, issuer string, logger *logrus.Entry, opts ...Option) *Middleware {
 	m := &Middleware{
 		jwksURL:            jwksURL,
@@ -226,6 +229,9 @@ func New(jwksURL, issuer string, logger *logrus.Entry, opts ...Option) *Middlewa
 	}
 	if issuer == "" && logger != nil {
 		logger.Warn("jwtauth: issuer validation disabled (empty issuer) — set issuer to enforce the iss claim")
+	}
+	if m.audience == "" && logger != nil {
+		logger.Warn("jwtauth: audience validation disabled — pass WithAudience(clientID), or tokens issued to other applications on the same issuer are accepted, with their role")
 	}
 	return m
 }

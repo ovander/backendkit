@@ -631,7 +631,9 @@ auth := jwtauth.New(jwksURL, issuer, logger,
 ```
 
 - **Audience.** Without `WithAudience` the `aud` claim is not checked, for backward
-  compatibility. Once it is set, a token without `aud` is rejected.
+  compatibility, and `New` logs a warning at startup: a token issued to another application on
+  the same Socrate would validate, with that application's `role`. Once it is set, a token
+  without `aud` is rejected.
 - **Revocation.** Local signature validation alone keeps a token valid until its `exp`, even
   after logout or a password change. The check typically compares `token_version` with the
   user's current value; with none configured, behaviour is unchanged.
