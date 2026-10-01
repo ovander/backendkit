@@ -8,6 +8,11 @@ All notable changes to backendkit are documented here. Format:
 
 ### Added
 
+- `socrate.Client.UpdateUserAsService` updates profile fields of one of the application's
+  members with the service-account token (`PATCH /api/apps/{id}/service/users/{user_id}`, Socrate
+  v1.7.0): the `UpdateProfileRequest` fields, never the email, password or roles. It returns
+  `ErrUserNotInApp` for a non-member and `ErrInvalidProfileUpdate` when Socrate refuses the values;
+  against an older Socrate, an error naming the version. Requested by GPWA.
 - `socrate.Client.Signup` creates a Socrate account with the password the user chose
   (`POST /api/auth/signup`), as a `user` member of the client's application; Socrate sends a
   verification e-mail. It returns `ErrUserAlreadyExists` for an email that already has a Socrate

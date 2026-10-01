@@ -519,7 +519,7 @@ calls acquire a `client_credentials` token automatically and cache it until near
 > `sub=app:{id}` and the Socrate admin routes cannot resolve the app ID at runtime without it.
 > Always set `AppID` in `ClientConfig`; omitting it causes an immediate error on the first
 > service-account call (`InviteUserAsService`, `RegisterUser`, `GetUserAsService`,
-> `SendMagicLink`, `Decide`).
+> `UpdateUserAsService`, `SendMagicLink`, `Decide`).
 
 ```go
 client, err := socrate.NewClient(socrate.ClientConfig{
