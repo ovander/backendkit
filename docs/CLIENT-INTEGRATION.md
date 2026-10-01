@@ -420,6 +420,7 @@ confidential clients.
 | Method | Auth | Returns | Notes |
 |--------|------|---------|-------|
 | `ExchangeCode(ctx, code, redirectURI, codeVerifier)` | creds | `*TokenSet` | Authorization Code + PKCE exchange. Pass `""` verifier if no PKCE. |
+| `Signup(ctx, SignupRequest)` | client_id | `*SignupResult` | self-service account with the user's own password, member of this app as `user`; Socrate sends a verification e-mail and sign-in works once verified. `ErrUserAlreadyExists` when the email has a Socrate account (maybe from another app: ask the user to sign in, then add them with `RegisterUser`); `*SignupError` (message safe to show) for a policy refusal. Rate-limited per address: attribute the browser (§7.1). |
 | `RefreshToken(ctx, refreshToken)` | creds | `*TokenSet` | refresh-token grant. |
 | `VerifyMagicLink(ctx, token)` | client_id | `*LoginResult` | completes passwordless login; `ErrMagicLinkAlreadyUsed` (422), `ErrMagicLinkInvalid` (401). `LoginResult.TokenSet()` gives the `*TokenSet` a BFF session is built from. |
 | `AdminLogin(ctx, email, password)` | creds | `*LoginResult` | superadmin portal login; `ErrInvalidCredentials` (401). |
@@ -724,8 +725,8 @@ User-Agent of every audited event, so without more it logs those as the BFF
 on the token endpoint apply to the BFF as a whole. Client attribution is
 opt-in: put the browser's address and User-Agent on the request context, and
 the `socrate.Client` calls made on the user's behalf (`ExchangeCode`,
-`RefreshToken`, `RevokeToken`, `VerifyMagicLink`, `AdminLogin`, `Logout`) send
-them as `X-Forwarded-For` and `User-Agent`. The `client_credentials` grant,
+`RefreshToken`, `RevokeToken`, `VerifyMagicLink`, `AdminLogin`, `Logout`,
+`Signup`) send them as `X-Forwarded-For` and `User-Agent`. The `client_credentials` grant,
 introspection and userinfo never do: no browser is involved.
 
 ```go

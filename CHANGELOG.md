@@ -8,6 +8,11 @@ All notable changes to backendkit are documented here. Format:
 
 ### Added
 
+- `socrate.Client.Signup` creates a Socrate account with the password the user chose
+  (`POST /api/auth/signup`), as a `user` member of the client's application; Socrate sends a
+  verification e-mail. It returns `ErrUserAlreadyExists` for an email that already has a Socrate
+  account and a `*SignupError`, whose message is safe to show, for a policy refusal. It carries the
+  client attribution, since Socrate rate-limits sign-ups per address. Requested by GPWA.
 - `socrate.ProfileInfo` gains `EmailVerified` (Socrate's userinfo already returns it; backendkit
   dropped it) and `Picture`, the user's avatar URL. `FullProfile`, `UpdateProfileRequest` and the
   app member type `User` gain `AvatarURL`. The avatar needs Socrate v1.7.0 (`avatar_url`, OIDC
