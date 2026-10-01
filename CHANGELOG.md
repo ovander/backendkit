@@ -8,6 +8,12 @@ All notable changes to backendkit are documented here. Format:
 
 ### Added
 
+- `socrate.LoginResult.TokenSet()` returns the tokens of a magic-link or admin login as the
+  `*TokenSet` that `bff.NewSession` takes, so a BFF redeems a magic link the way it handles an
+  Authorization Code login, without copying fields by hand. The roles are copied, not shared.
+
+### Added
+
 - Docs: [`docs/MIGRATING-TO-SOCRATE.md`](docs/MIGRATING-TO-SOCRATE.md), a field guide for moving an
   application onto Socrate, from the Ascenda and Parashift migrations: the identifiers to get from
   the operator (numeric app ID, admin address, whether user IDs are kept), the configuration names,
