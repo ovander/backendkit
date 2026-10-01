@@ -6,6 +6,17 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Added
+
+- Docs: [`docs/MIGRATING-TO-SOCRATE.md`](docs/MIGRATING-TO-SOCRATE.md), a field guide for moving an
+  application onto Socrate, from the Ascenda and Parashift migrations: the identifiers to get from
+  the operator (numeric app ID, admin address, whether user IDs are kept), the configuration names,
+  the rule behind each failure seen (audience, app ID, service-account routes, loopback admin API,
+  client attribution, magic-link page, BFF sessions), the cut-over order, a checklist and a symptom
+  index. The integration guide now says that `role` belongs to the application the token was
+  issued for (so `WithAudience` is required for `httpware.RBAC` to be safe), shows a BFF
+  magic-link redemption handler, and lists the new symptoms in its FAQ. No code change.
+
 ## [1.15.1] - 2026-09-30
 
 Patch release on the **v1** line: no change to any exported identifier. `socrate.Client.RegisterUser`
