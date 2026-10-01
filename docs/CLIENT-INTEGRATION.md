@@ -708,9 +708,10 @@ await fetch('/api/reports', {
 What the package guarantees (a request without a valid session gets 401 and is
 never forwarded; CSRF is checked in constant time; only a refresh Socrate
 rejects ends a session) is listed in the README's
-[`bff` reference](../README.md#bff). For more than one BFF instance, replace
-`MemoryStore` and the `pending` map with a shared store; `Session.Snapshot` and
-`NewSessionFromSnapshot` serialise a session.
+[`bff` reference](../README.md#bff). `MemoryStore` loses its sessions on a
+restart; `bff.NewPostgresStore` keeps them in PostgreSQL, encrypted, and is
+shared by several instances (README). With more than one instance, also keep the
+`pending` logins in a shared store.
 [`oauth2-admin/bff`](https://github.com/ovander/oauth2-admin/tree/main/bff)
 is a complete BFF built this way, with logout and token revocation.
 
