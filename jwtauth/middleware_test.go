@@ -342,6 +342,29 @@ func TestNew_WarnsOnEmptyIssuer(t *testing.T) {
 	}
 }
 
+// ─── Audience validation warning ────────────────────────────────────────────
+
+func TestNew_WarnsWithoutAudience(t *testing.T) {
+	var buf bytes.Buffer
+	l := logrus.New()
+	l.SetOutput(&buf)
+	entry := logrus.NewEntry(l)
+
+	_ = jwtauth.New("http://example/jwks.json", "https://issuer.example", entry)
+	if !strings.Contains(buf.String(), "audience validation disabled") {
+		t.Errorf("expected missing-audience warning, got: %s", buf.String())
+	}
+
+	buf.Reset()
+	_ = jwtauth.New("http://example/jwks.json", "https://issuer.example", entry, jwtauth.WithAudience("my-client"))
+	if buf.Len() != 0 {
+		t.Errorf("expected no warning with issuer and audience set, got: %s", buf.String())
+	}
+
+	// A nil logger is allowed and must not panic.
+	_ = jwtauth.New("http://example/jwks.json", "", nil)
+}
+
 // ─── Bounded JWKS read (F-8 / INV-12) ───────────────────────────────────────
 
 func TestHandler_RejectsOversizedJWKS(t *testing.T) {

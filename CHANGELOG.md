@@ -6,6 +6,14 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Changed
+
+- `jwtauth.New` logs a warning at startup when no `WithAudience` option is given, as it already
+  does for an empty issuer. Without the audience check, a token issued to another application on
+  the same Socrate validates, and its `role` claim (the user's role in that application) is
+  trusted, including by `httpware.RBAC`: in the Ascenda migration, an administrator of another
+  application was an administrator in Ascenda. Behaviour is unchanged; only the log line is new.
+
 ### Added
 
 - Docs: [`docs/MIGRATING-TO-SOCRATE.md`](docs/MIGRATING-TO-SOCRATE.md), a field guide for moving an
