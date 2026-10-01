@@ -905,9 +905,7 @@ mux.HandleFunc("POST /bff/magic-link/verify", func(w http.ResponseWriter, r *htt
 		http.Error(w, "invalid or expired link", http.StatusUnauthorized)
 		return
 	}
-	ts := &socrate.TokenSet{AccessToken: lr.AccessToken, RefreshToken: lr.RefreshToken,
-		IDToken: lr.IDToken, TokenType: lr.TokenType, ExpiresIn: lr.ExpiresIn,
-		Roles: lr.Roles, AppRoles: lr.AppRoles}
+	ts := lr.TokenSet() // the same *TokenSet the callback's ExchangeCode returns
 	user := bff.UserInfo{Roles: ts.Roles}
 	if p, err := client.GetCurrentUserProfile(socrate.WithJWT(r.Context(), ts.AccessToken)); err == nil && p != nil {
 		user.Sub, user.Email, user.Name = p.Sub, p.Email, p.Name
