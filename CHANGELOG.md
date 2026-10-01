@@ -6,6 +6,14 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-10-01
+
+Minor release on the **v1** line: one new method, no breaking change. `socrate.LoginResult.TokenSet()`
+turns a magic-link or admin login into the token set a BFF session is built from; `jwtauth.New`
+warns at startup when the audience check is off; a new guide,
+[`docs/MIGRATING-TO-SOCRATE.md`](docs/MIGRATING-TO-SOCRATE.md), condenses the Ascenda and Parashift
+migrations into a checklist and a symptom index.
+
 ### Added
 
 - Docs: [`docs/MIGRATING-TO-SOCRATE.md`](docs/MIGRATING-TO-SOCRATE.md), a field guide for moving an
@@ -472,7 +480,8 @@ are rejected. Confirm your Socrate server populates `aud` before enabling it in
 production. Making audience validation required-by-default is deferred to a future
 major (v2.0) and tracked separately.
 
-[Unreleased]: https://github.com/ovander/backendkit/compare/v1.15.1...HEAD
+[Unreleased]: https://github.com/ovander/backendkit/compare/v1.16.0...HEAD
+[1.16.0]: https://github.com/ovander/backendkit/compare/v1.15.1...v1.16.0
 [1.15.1]: https://github.com/ovander/backendkit/compare/v1.15.0...v1.15.1
 [1.15.0]: https://github.com/ovander/backendkit/compare/v1.14.0...v1.15.0
 [1.14.0]: https://github.com/ovander/backendkit/compare/v1.13.0...v1.14.0
