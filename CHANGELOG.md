@@ -6,6 +6,13 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Added
+
+- `socrate.ProfileInfo` gains `EmailVerified` (Socrate's userinfo already returns it; backendkit
+  dropped it) and `Picture`, the user's avatar URL. `FullProfile`, `UpdateProfileRequest` and the
+  app member type `User` gain `AvatarURL`. The avatar needs Socrate v1.7.0 (`avatar_url`, OIDC
+  `picture`); against an older server the fields stay empty. Requested by GPWA.
+
 ## [1.16.0] - 2026-10-01
 
 Minor release on the **v1** line: one new method, no breaking change. `socrate.LoginResult.TokenSet()`

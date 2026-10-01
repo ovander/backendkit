@@ -342,6 +342,8 @@ type User struct {
 	InviteSent bool       `json:"invite_sent"`
 	CreatedAt  time.Time  `json:"created_at"`
 	LastLogin  *time.Time `json:"last_login,omitempty"`
+	// AvatarURL is the member's picture (Socrate v1.7.0 or later); nil when unset.
+	AvatarURL *string `json:"avatar_url,omitempty"`
 }
 
 // UserListResponse is the paginated list returned by ListUsers.
@@ -386,6 +388,11 @@ type ProfileInfo struct {
 	LastName    string `json:"last_name,omitempty"`
 	GivenName   string `json:"given_name,omitempty"`
 	FamilyName  string `json:"family_name,omitempty"`
+	// EmailVerified reports whether the user confirmed their email address.
+	EmailVerified bool `json:"email_verified"`
+	// Picture is the user's avatar URL (the OIDC picture claim, Socrate
+	// v1.7.0 or later); empty when the user has none.
+	Picture string `json:"picture,omitempty"`
 }
 
 // ActivityLog is a Socrate security audit log entry.

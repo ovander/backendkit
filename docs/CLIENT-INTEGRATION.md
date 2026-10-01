@@ -404,9 +404,9 @@ Legend — **Auth**: `JWT` = forwards caller JWT (mode A), `M2M` = service-accou
 
 | Method | Auth | Returns | Notes |
 |--------|------|---------|-------|
-| `GetCurrentUserProfile(ctx)` | JWT | `*ProfileInfo` | `/oauth/userinfo`; **nil,nil** on 401/404. Limited OIDC claim set. |
+| `GetCurrentUserProfile(ctx)` | JWT | `*ProfileInfo` | `/oauth/userinfo`; **nil,nil** on 401/404. Limited OIDC claim set, including `EmailVerified` and `Picture` (the avatar URL; Socrate v1.7.0+). |
 | `GetProfile(ctx)` | JWT | `*FullProfile` | full editable profile (`/api/profile`); **nil,nil** on 404. |
-| `UpdateProfile(ctx, UpdateProfileRequest)` | JWT | `*FullProfile` | patches the caller's own profile (name, phone, company, …). |
+| `UpdateProfile(ctx, UpdateProfileRequest)` | JWT | `*FullProfile` | patches the caller's own profile (name, phone, company, …, and `AvatarURL`, an https URL, on Socrate v1.7.0+; `""` clears it). |
 | `IntrospectToken(ctx, token)` | creds | `*IntrospectResponse` | RFC 7662; `.Active` tells you if the token is live. |
 | `RevokeToken(ctx, token)` | creds | `error` | RFC 7009; revokes an access or refresh token. |
 | `Logout(ctx)` | JWT | `error` | invalidates the caller's session (`/api/auth/logout`). |
