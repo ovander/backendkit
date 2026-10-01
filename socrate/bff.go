@@ -82,6 +82,32 @@ type LoginResult struct {
 	MustChangePassword bool              `json:"must_change_password,omitempty"`
 }
 
+// TokenSet returns the tokens of r as a *TokenSet, the type a BFF session is
+// built from (bff.NewSession) and that ExchangeCode and RefreshToken return, so
+// a magic-link or admin login is handled like an Authorization Code login. The
+// user ID and MustChangePassword, which a TokenSet does not carry, are left out;
+// read them from r. A nil r yields nil.
+func (r *LoginResult) TokenSet() *TokenSet {
+	if r == nil {
+		return nil
+	}
+	ts := &TokenSet{
+		AccessToken:  r.AccessToken,
+		RefreshToken: r.RefreshToken,
+		IDToken:      r.IDToken,
+		TokenType:    r.TokenType,
+		ExpiresIn:    r.ExpiresIn,
+		Roles:        append([]string(nil), r.Roles...),
+	}
+	if r.AppRoles != nil {
+		ts.AppRoles = make(map[string]string, len(r.AppRoles))
+		for k, v := range r.AppRoles {
+			ts.AppRoles[k] = v
+		}
+	}
+	return ts
+}
+
 // postForm sends an application/x-www-form-urlencoded POST to fullURL. It is
 // used only for grants made on a user's behalf (authorization_code,
 // refresh_token), so it applies the ClientAttribution in ctx, if any.

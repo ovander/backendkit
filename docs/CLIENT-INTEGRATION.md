@@ -421,7 +421,7 @@ confidential clients.
 |--------|------|---------|-------|
 | `ExchangeCode(ctx, code, redirectURI, codeVerifier)` | creds | `*TokenSet` | Authorization Code + PKCE exchange. Pass `""` verifier if no PKCE. |
 | `RefreshToken(ctx, refreshToken)` | creds | `*TokenSet` | refresh-token grant. |
-| `VerifyMagicLink(ctx, token)` | client_id | `*LoginResult` | completes passwordless login; `ErrMagicLinkAlreadyUsed` (422), `ErrMagicLinkInvalid` (401). |
+| `VerifyMagicLink(ctx, token)` | client_id | `*LoginResult` | completes passwordless login; `ErrMagicLinkAlreadyUsed` (422), `ErrMagicLinkInvalid` (401). `LoginResult.TokenSet()` gives the `*TokenSet` a BFF session is built from. |
 | `AdminLogin(ctx, email, password)` | creds | `*LoginResult` | superadmin portal login; `ErrInvalidCredentials` (401). |
 
 These calls, with `RevokeToken` and `Logout`, send the browser's address and
