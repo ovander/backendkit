@@ -13,6 +13,10 @@ It is written for two audiences working on the same product:
   browser apps through a BFF, mobile, native and CLI clients with their own
   tokens.
 
+> **Moving an existing application?** Read
+> [Moving an application onto Socrate](MIGRATING-TO-SOCRATE.md) first: the order to do things in,
+> the identifiers to ask for, and a symptom index from two real migrations.
+
 > **Reference vs. guide.** This document is the *client-side* integration
 > guide: it tells you how to wire things up. The raw HTTP endpoints are
 > described in the Socrate server repository, which is not public yet; when
@@ -282,6 +286,14 @@ This trips people up, so it's worth stating plainly:
 | `email`, `name` | ❌ **not** in access tokens | present in ID tokens / `userinfo` only |
 | `tenant_id` | ⚠️ only if the server is configured to issue it | else `ctxutil.GetTenantID` → `uuid.Nil` |
 | `plan` | ⚠️ only if the server is configured to issue it | else `ctxutil.GetUserPlan` → `"freemium"` |
+
+**`role` is the user's role in the application the token was issued for**, not in yours.
+All applications on one Socrate share its signing keys, so without
+`jwtauth.WithAudience(clientID)` a token issued to another application validates
+here and carries *that* application's role, which `httpware.RBAC` then trusts.
+Always set `WithAudience` (§4). `app_roles` maps each application's client ID to
+the user's role in it; Socrate admins and superadmins are never listed there and
+get `role: "admin"` on every application through their global role.
 
 **To get the user's email/name**, call `socrate.Client.GetCurrentUserProfile`
 (§6.4) — it hits `/oauth/userinfo` with the forwarded JWT. Don't expect them in
@@ -855,8 +867,61 @@ documented in the Socrate server repository.
 
 Magic-link **send** is backend-only (M2M) — your frontend asks *your backend*,
 which calls `client.SendMagicLink`. The user clicks the emailed link, and the
-page it opens completes the login. With a BFF, that page posts the token to the
-BFF (§7.1). A client that holds its own tokens posts it to Socrate:
+page it opens completes the login.
+
+**Register that page first.** Since Socrate v1.6.0 each application has a
+magic-link page (`magic_link_url`, the "Magic-link page" field on the
+application in the admin console): an `https` URL on the same origin as one of
+the app's redirect URIs. The e-mail opens it with `?token=…&client_id=…`. Without
+it, `SendMagicLink` gets `409` and no e-mail is sent.
+
+**The page must not redeem the token on load** (mail scanners open links), and
+should remove the token from the address bar and send `Referrer-Policy:
+no-referrer`. On a click, it posts the token to **your BFF**, which redeems it
+and creates the session as the callback does (§7.1):
+
+```go
+// Pre-session POST: there is no session yet to carry a CSRF token, so require a
+// same-origin JSON request (a cross-site form cannot send this Content-Type
+// without a CORS preflight) and check Origin, against login CSRF.
+mux.HandleFunc("POST /bff/magic-link/verify", func(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Origin") != appOrigin || r.Header.Get("Content-Type") != "application/json" {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	var in struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in); err != nil || in.Token == "" {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	lr, err := client.VerifyMagicLink(r.Context(), in.Token)
+	switch {
+	case errors.Is(err, socrate.ErrMagicLinkAlreadyUsed):
+		http.Error(w, "this link has already been used", http.StatusUnprocessableEntity)
+		return
+	case err != nil:
+		http.Error(w, "invalid or expired link", http.StatusUnauthorized)
+		return
+	}
+	ts := &socrate.TokenSet{AccessToken: lr.AccessToken, RefreshToken: lr.RefreshToken,
+		IDToken: lr.IDToken, TokenType: lr.TokenType, ExpiresIn: lr.ExpiresIn,
+		Roles: lr.Roles, AppRoles: lr.AppRoles}
+	user := bff.UserInfo{Roles: ts.Roles}
+	if p, err := client.GetCurrentUserProfile(socrate.WithJWT(r.Context(), ts.AccessToken)); err == nil && p != nil {
+		user.Sub, user.Email, user.Name = p.Sub, p.Email, p.Name
+	}
+	s := bff.NewSession(bff.RandomToken(32), bff.RandomToken(32), ts, user, time.Now())
+	store.Put(s)
+	gw.Cookie.SetSession(w, s.ID())
+	w.WriteHeader(http.StatusNoContent)
+})
+```
+
+The verify call uses this BFF's own client ID; ignore the `client_id` in the
+link. A client that holds its own tokens (§7.2) posts the token to Socrate
+instead:
 
 ```js
 // User landed on your magic-link page with ?token=...&client_id=... in the URL.
@@ -1227,6 +1292,17 @@ plan from your own database after identifying the user by `sub`.
 causes: wrong `SOCRATE_ISSUER` (issuer mismatch), clock skew (expired), or the
 JWKS URL pointing at the wrong environment. Check `jwtauth` logs — it logs the
 validation failure reason.
+
+**`SendMagicLink` answers 409.** The application has no magic-link page
+registered (§7.5). The e-mail opening a `405` means a Socrate older than v1.6.0.
+
+**An administrator of another application is an administrator here.** The
+audience is not checked: add `jwtauth.WithAudience(clientID)` (§5).
+
+**Invitations and magic-link e-mails fail, but sign-in works.** The admin API is
+unreachable from your host: check `AdminBaseURL` and, on a separate host, the SSH
+tunnel. The [migration guide](MIGRATING-TO-SOCRATE.md#6-symptom-index) has a
+longer symptom index.
 
 **Should the frontend ever call Socrate's admin API port?** No. It's internal
 (8081 in the default deployment).

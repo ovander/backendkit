@@ -262,7 +262,9 @@ func main() {
 
 The [client integration guide](docs/CLIENT-INTEGRATION.md) walks through a complete integration
 with Socrate: middleware wiring, the `socrate.Client` auth modes, login flows for browser and
-non-browser clients, the BFF, policy enforcement and error handling.
+non-browser clients, the BFF, policy enforcement and error handling. Moving an existing
+application onto Socrate? Start with [Moving an application onto Socrate](docs/MIGRATING-TO-SOCRATE.md):
+the identifiers to ask for, the cut-over order and a symptom index.
 
 ---
 
