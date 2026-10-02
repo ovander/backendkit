@@ -559,7 +559,7 @@ call.
 A BFF calls Socrate's token and revoke endpoints server-to-server, so Socrate would audit a login,
 refresh or logout as the BFF (`127.0.0.1`, `Go-http-client/1.1`). Put the browser's address and
 User-Agent on the context and the calls made on a user's behalf — `ExchangeCode`, `RefreshToken`,
-`RevokeToken`, `VerifyMagicLink`, `AdminLogin`, `Logout` — send them as `X-Forwarded-For` and
+`RevokeToken`, `VerifyMagicLink`, `AdminLogin`, `Logout`, `Signup` — send them as `X-Forwarded-For` and
 `User-Agent`. Service-account calls (the `client_credentials` grant), `IntrospectToken` and
 `GetCurrentUserProfile` never do. Without attribution on the context nothing changes.
 
