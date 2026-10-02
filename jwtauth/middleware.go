@@ -17,6 +17,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -84,9 +85,14 @@ type jwksResponse struct {
 
 // Middleware validates RS256 JWTs using RSA public keys from a JWKS endpoint.
 type Middleware struct {
-	jwksURL         string
-	issuer          string
-	audience        string
+	jwksURL string
+	issuer  string
+	// audiences are the accepted aud values; a token passes when its aud
+	// intersects them. audienceSet records that an audience option was given,
+	// so that WithAudiences with no usable value rejects every token instead of
+	// silently disabling the check.
+	audiences       []string
+	audienceSet     bool
 	revocationCheck RevocationChecker
 	logger          *logrus.Entry
 	httpClient      *http.Client
@@ -142,8 +148,39 @@ type RevocationChecker func(ctx context.Context, claims *SocrateClaims) error
 // Audience validation is opt-in for backward compatibility: when WithAudience is
 // not supplied the aud claim is not checked. New services should set it. A token
 // that lacks an aud claim is rejected when an expected audience is configured.
+//
+// WithAudience(a) is WithAudiences(a), except that WithAudience("") keeps its
+// historical meaning of no audience check.
 func WithAudience(expectedAudience string) Option {
-	return func(m *Middleware) { m.audience = expectedAudience }
+	return func(m *Middleware) {
+		if expectedAudience == "" {
+			m.audiences, m.audienceSet = nil, false
+			return
+		}
+		m.audiences, m.audienceSet = []string{expectedAudience}, true
+	}
+}
+
+// WithAudiences enables JWT audience ("aud") validation against a set: a token
+// is accepted only if its aud claim contains at least one of the expected
+// audiences. Use it for a route group that serves several applications of the
+// same Socrate (for example a portal and two service accounts); each token is
+// still bound to one of them, and its role claim is that application's role.
+//
+// Empty strings and duplicates are ignored. Fail closed: when no non-empty
+// audience is given, every token is rejected (and New logs an error), rather
+// than the check being disabled. A token that lacks an aud claim is rejected.
+// The last audience option passed to New wins.
+func WithAudiences(expectedAudiences ...string) Option {
+	return func(m *Middleware) {
+		var set []string
+		for _, a := range expectedAudiences {
+			if a != "" && !slices.Contains(set, a) {
+				set = append(set, a)
+			}
+		}
+		m.audiences, m.audienceSet = set, true
+	}
 }
 
 // WithRevocationCheck enables a post-validation revocation check. The supplied
@@ -230,8 +267,11 @@ func New(jwksURL, issuer string, logger *logrus.Entry, opts ...Option) *Middlewa
 	if issuer == "" && logger != nil {
 		logger.Warn("jwtauth: issuer validation disabled (empty issuer) — set issuer to enforce the iss claim")
 	}
-	if m.audience == "" && logger != nil {
+	if !m.audienceSet && logger != nil {
 		logger.Warn("jwtauth: audience validation disabled — pass WithAudience(clientID), or tokens issued to other applications on the same issuer are accepted, with their role")
+	}
+	if m.audienceSet && len(m.audiences) == 0 && logger != nil {
+		logger.Error("jwtauth: WithAudiences was given no audience — every token is rejected")
 	}
 	return m
 }
@@ -352,8 +392,12 @@ func (m *Middleware) validateToken(tokenString string) (*SocrateClaims, error) {
 	if m.issuer != "" {
 		opts = append(opts, jwt.WithIssuer(m.issuer))
 	}
-	if m.audience != "" {
-		opts = append(opts, jwt.WithAudience(m.audience))
+	if m.audienceSet {
+		if len(m.audiences) == 0 {
+			return nil, fmt.Errorf("token invalid")
+		}
+		// jwt.WithAudience accepts the token when its aud contains any of them.
+		opts = append(opts, jwt.WithAudience(m.audiences...))
 	}
 
 	tok, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
