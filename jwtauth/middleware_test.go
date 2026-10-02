@@ -439,3 +439,58 @@ func TestHandler_PropagatesAuthTimeAndAMR(t *testing.T) {
 		t.Fatalf("absent claims came back as auth_time=%d amr=%v", at, amr)
 	}
 }
+
+// ─── WithAudiences ──────────────────────────────────────────────────────────
+
+func TestHandler_WithAudiences(t *testing.T) {
+	key := generateTestKey(t)
+	srv := jwksServer(t, "k1", key)
+	defer srv.Close()
+
+	tests := []struct {
+		name string
+		opts []jwtauth.Option
+		aud  []string
+		want int
+	}{
+		{"first of the set", []jwtauth.Option{jwtauth.WithAudiences("portal", "evidence-loop", "benchmark")}, []string{"portal"}, http.StatusOK},
+		{"last of the set", []jwtauth.Option{jwtauth.WithAudiences("portal", "evidence-loop", "benchmark")}, []string{"benchmark"}, http.StatusOK},
+		{"multi-valued aud intersecting", []jwtauth.Option{jwtauth.WithAudiences("portal", "evidence-loop")}, []string{"other", "evidence-loop"}, http.StatusOK},
+		{"no intersection", []jwtauth.Option{jwtauth.WithAudiences("portal", "evidence-loop")}, []string{"console", "other"}, http.StatusUnauthorized},
+		{"missing aud", []jwtauth.Option{jwtauth.WithAudiences("portal", "evidence-loop")}, nil, http.StatusUnauthorized},
+		{"empty-string aud", []jwtauth.Option{jwtauth.WithAudiences("portal", "")}, []string{""}, http.StatusUnauthorized},
+		{"empty strings ignored in the set", []jwtauth.Option{jwtauth.WithAudiences("", "portal", "portal")}, []string{"portal"}, http.StatusOK},
+		{"no audience given fails closed", []jwtauth.Option{jwtauth.WithAudiences()}, []string{"portal"}, http.StatusUnauthorized},
+		{"only empty strings fail closed", []jwtauth.Option{jwtauth.WithAudiences("", "")}, nil, http.StatusUnauthorized},
+		{"one-element set equals WithAudience", []jwtauth.Option{jwtauth.WithAudiences("app-123")}, []string{"app-123"}, http.StatusOK},
+		{"last option wins: WithAudience after WithAudiences", []jwtauth.Option{jwtauth.WithAudiences("portal"), jwtauth.WithAudience("console")}, []string{"portal"}, http.StatusUnauthorized},
+		{"last option wins: WithAudiences after WithAudience", []jwtauth.Option{jwtauth.WithAudience("console"), jwtauth.WithAudiences("portal")}, []string{"portal"}, http.StatusOK},
+		{"WithAudience(\"\") after WithAudiences disables the check", []jwtauth.Option{jwtauth.WithAudiences("portal"), jwtauth.WithAudience("")}, []string{"other"}, http.StatusOK},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := jwtauth.New(srv.URL, "", testLogger(), tt.opts...)
+			if code := serveWithToken(t, m, key, claimsWithAudience(tt.aud...)); code != tt.want {
+				t.Errorf("got %d, want %d", code, tt.want)
+			}
+		})
+	}
+}
+
+func TestNew_WithAudiencesLogging(t *testing.T) {
+	var buf bytes.Buffer
+	l := logrus.New()
+	l.SetOutput(&buf)
+	entry := logrus.NewEntry(l)
+
+	_ = jwtauth.New("http://example/jwks.json", "https://issuer.example", entry, jwtauth.WithAudiences("a", "b"))
+	if buf.Len() != 0 {
+		t.Errorf("expected no log with a non-empty audience set, got: %s", buf.String())
+	}
+
+	buf.Reset()
+	_ = jwtauth.New("http://example/jwks.json", "https://issuer.example", entry, jwtauth.WithAudiences())
+	if !strings.Contains(buf.String(), "every token is rejected") || strings.Contains(buf.String(), "audience validation disabled") {
+		t.Errorf("expected the fail-closed error and no disabled warning, got: %s", buf.String())
+	}
+}

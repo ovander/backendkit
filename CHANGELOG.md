@@ -6,6 +6,13 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Added
+- `jwtauth.WithAudiences(...string)`: audience validation against a set; a token is accepted when
+  its `aud` contains at least one expected audience. Empty strings and duplicates are ignored, and
+  a call with no non-empty audience rejects every token (fail closed, logged at `New`).
+  `WithAudience(a)` is now the one-element case; `WithAudience("")` still disables the check.
+  Requested by Lakebridge (one route group serving a portal and two service accounts).
+
 ## [1.17.1] - 2026-10-02
 
 Documentation-only patch release: no code change from v1.17.0.
