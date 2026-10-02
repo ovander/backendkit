@@ -651,6 +651,66 @@ func (c *Client) GetUserAsService(ctx context.Context, userID string) (*User, er
 	return &u, nil
 }
 
+// ErrUserNotInApp is returned by UpdateUserAsService when the user is not a
+// member of the client's application (or does not exist).
+var ErrUserNotInApp = errors.New("socrate: user is not a member of this application")
+
+// ErrInvalidProfileUpdate is returned by UpdateUserAsService when Socrate
+// refuses the update (an invalid avatar URL, an empty update); the wrapped
+// message is Socrate's.
+var ErrInvalidProfileUpdate = errors.New("socrate: invalid profile update")
+
+// UpdateUserAsService updates profile fields of one of the application's
+// members using the service-account token, via
+// PATCH /api/apps/{id}/service/users/{user_id} (Socrate v1.7.0 or later), and
+// returns the member. Only the UpdateProfileRequest fields can change: never
+// the email, password or roles. Set the fields to change; nil ones are left
+// as they are, and an empty string clears AvatarURL.
+//
+// A Socrate account is shared by every application on the instance, so the
+// change shows in all of them. Returns ErrUserNotInApp when the user is not a
+// member of this application, ErrInvalidProfileUpdate when Socrate refuses the
+// values, and an error naming the version when Socrate has no such route.
+func (c *Client) UpdateUserAsService(ctx context.Context, userID string, req UpdateProfileRequest) (*User, error) {
+	appID, err := c.getAppIDAsService(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve app ID: %w", err)
+	}
+	resp, err := c.doWithServiceToken(ctx, http.MethodPatch,
+		c.adminURL(fmt.Sprintf("/api/apps/%s/service/users/%s", appID, url.PathEscape(userID))), req)
+	if err != nil {
+		return nil, err
+	}
+	b, err := readBody(resp)
+	if err != nil {
+		return nil, err
+	}
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var u User
+		if err := json.Unmarshal(b, &u); err != nil {
+			return nil, fmt.Errorf("decode user: %w", err)
+		}
+		return &u, nil
+	case http.StatusNotFound:
+		if isSocrateErrorBody(b) {
+			return nil, ErrUserNotInApp
+		}
+	case http.StatusBadRequest:
+		var e struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(b, &e) == nil && e.Error != "" {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidProfileUpdate, e.Error)
+		}
+	}
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+		return nil, fmt.Errorf("update user HTTP %d: PATCH /api/apps/{id}/service/users/{user_id} "+
+			"needs Socrate v1.7.0 or later: %s", resp.StatusCode, b)
+	}
+	return nil, fmt.Errorf("update user HTTP %d: %s", resp.StatusCode, b)
+}
+
 // RegisterUser creates a user and adds them to the app using the service-account token,
 // via POST /api/apps/{id}/service/users. Unlike InviteUserAsService it also sends Name.
 // Socrate dispatches an invite email automatically.

@@ -444,6 +444,7 @@ automatically from `client_id` (cached).
 | `ResendVerification(ctx, userID)` | JWT | `error` | re-sends the verification email. |
 | `ForcePasswordReset(ctx, userID)` | JWT | `error` | triggers a password-reset email. |
 | `GetUserAsService(ctx, userID)` | M2M | `*User` | one of the app's members by numeric id (a token's `sub`); **nil,nil** when not a member (Socrate's 404). Needs a Socrate later than v1.5.3; an older one answers with an error, not nil,nil. |
+| `UpdateUserAsService(ctx, userID, UpdateProfileRequest)` | M2M | `*User` | updates profile fields of one of the app's members (name, phone, company, …, `AvatarURL`); never email, password or roles. The account is shared by every app on Socrate, so the change shows everywhere. `ErrUserNotInApp`, `ErrInvalidProfileUpdate` (Socrate's message wrapped). Needs Socrate v1.7.0. |
 | `RegisterUser(ctx, CreateUserRequest)` | M2M | `*CreateUserResult` | M2M create+invite, with `Name`; `ErrUserAlreadyExists` on 409. |
 | `InviteUserAsService(ctx, ServiceInviteRequest)` | M2M | `*CreateUserResult` | dedicated M2M invite route; no human JWT needed. |
 
@@ -1250,6 +1251,7 @@ port (8081 in the default deployment).
 | `ResendVerification` / `ForcePasswordReset` | `…/users/{uid}/…` | JWT | Admin |
 | `RegisterUser` / `InviteUserAsService` | `POST …/api/apps/{id}/service/users` | M2M | Admin |
 | `GetUserAsService` | `GET …/api/apps/{id}/service/users/{uid}` | M2M | Admin |
+| `UpdateUserAsService` | `PATCH …/api/apps/{id}/service/users/{uid}` | M2M | Admin |
 | `SendMagicLink` | `POST …/api/apps/{id}/service/magic-link` | M2M | Admin |
 | `ListApps` … `RotateSecret` | `…/api/admin/apps…` | JWT (admin) | Admin |
 | `AdminListUsers` … `RevokeUserTokens` | `…/api/admin/users…` | JWT (superadmin) | Admin |
