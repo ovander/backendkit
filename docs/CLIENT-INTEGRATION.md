@@ -1247,6 +1247,8 @@ port (8081 in the default deployment).
 | `GetCurrentUserProfile` | `GET /oauth/userinfo` | JWT | OAuth |
 | `IntrospectToken` | `POST /oauth/introspect` | creds | OAuth |
 | `RevokeToken` | `POST /oauth/revoke` | creds | OAuth |
+| `GetProfile` / `UpdateProfile` | `GET` / `PUT /api/profile` | JWT | OAuth |
+| `Signup` | `POST /api/auth/signup` | client_id | OAuth |
 | `ListUsers` / `GetUser` / `CreateUser` | `…/api/apps/{id}/users` | JWT | Admin |
 | `UpdateUserRole` / `DeleteUser` | `…/api/apps/{id}/users/{uid}` | JWT | Admin |
 | `ResendVerification` / `ForcePasswordReset` | `…/users/{uid}/…` | JWT | Admin |
