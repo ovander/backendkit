@@ -546,8 +546,10 @@ if errors.Is(err, socrate.ErrUserAlreadyExists) {
 }
 ```
 
-Beyond user management, the client wraps the token flows a BFF needs (`ExchangeCode`,
-`RefreshToken`, `VerifyMagicLink`, `Logout`), token introspection and revocation, magic links,
+Beyond user management (including `Signup` with the user's own password, and
+`UpdateUserAsService` for a member's profile fields and avatar URL), the client wraps the token
+flows a BFF needs (`ExchangeCode`, `RefreshToken`, `VerifyMagicLink`, `Logout`), token
+introspection and revocation, magic links,
 app and superadmin management, security monitoring and alerts, reports, the dashboard and audit
 logs, and policy decisions (`Decide`). The
 [client integration guide](docs/CLIENT-INTEGRATION.md#6-backend-the-socrateclient) explains the

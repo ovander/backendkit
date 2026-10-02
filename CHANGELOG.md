@@ -6,6 +6,12 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Documentation
+- The migration guide covers the v1.17.0 additions: a new §3.8 maps an application's own
+  sign-up, profile edits, avatars and e-mail-verified flag to `Signup`, `UpdateProfile`,
+  `UpdateUserAsService`, `AvatarURL` and `ProfileInfo`; §3.7 names `bff.NewPostgresStore`; the
+  checklist and symptom index follow. The quick reference lists `Signup` and the profile calls.
+
 ## [1.17.0] - 2026-10-02
 
 Minor release on the **v1** line, for GPWA: additive only. The user profile types carry
