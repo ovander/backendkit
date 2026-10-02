@@ -6,6 +6,10 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+## [1.17.1] - 2026-10-02
+
+Documentation-only patch release: no code change from v1.17.0.
+
 ### Documentation
 - The migration guide covers the v1.17.0 additions: a new §3.8 maps an application's own
   sign-up, profile edits, avatars and e-mail-verified flag to `Signup`, `UpdateProfile`,
@@ -518,7 +522,8 @@ are rejected. Confirm your Socrate server populates `aud` before enabling it in
 production. Making audience validation required-by-default is deferred to a future
 major (v2.0) and tracked separately.
 
-[Unreleased]: https://github.com/ovander/backendkit/compare/v1.17.0...HEAD
+[Unreleased]: https://github.com/ovander/backendkit/compare/v1.17.1...HEAD
+[1.17.1]: https://github.com/ovander/backendkit/compare/v1.17.0...v1.17.1
 [1.17.0]: https://github.com/ovander/backendkit/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/ovander/backendkit/compare/v1.15.1...v1.16.0
 [1.15.1]: https://github.com/ovander/backendkit/compare/v1.15.0...v1.15.1
