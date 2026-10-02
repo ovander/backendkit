@@ -6,6 +6,14 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-10-02
+
+Minor release on the **v1** line, for GPWA: additive only. The user profile types carry
+`EmailVerified` and the avatar; `socrate.Client.Signup` creates an account with the user's own
+password; `UpdateUserAsService` updates a member's profile fields; `bff.PostgresStore` keeps BFF
+sessions across restarts, encrypted at rest. The avatar fields and `UpdateUserAsService` need
+Socrate v1.7.0. pgx is added to `go.mod` for the store's tests only.
+
 ### Added
 
 - `bff.PostgresStore`, a durable `SessionStore`: sessions survive a restart and are shared by
@@ -504,7 +512,8 @@ are rejected. Confirm your Socrate server populates `aud` before enabling it in
 production. Making audience validation required-by-default is deferred to a future
 major (v2.0) and tracked separately.
 
-[Unreleased]: https://github.com/ovander/backendkit/compare/v1.16.0...HEAD
+[Unreleased]: https://github.com/ovander/backendkit/compare/v1.17.0...HEAD
+[1.17.0]: https://github.com/ovander/backendkit/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/ovander/backendkit/compare/v1.15.1...v1.16.0
 [1.15.1]: https://github.com/ovander/backendkit/compare/v1.15.0...v1.15.1
 [1.15.0]: https://github.com/ovander/backendkit/compare/v1.14.0...v1.15.0
