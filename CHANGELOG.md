@@ -6,6 +6,30 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Added
+
+- `bff.PostgresStore`, a durable `SessionStore`: sessions survive a restart and are shared by
+  several BFF instances. It works through a `*sql.DB` the application opens with its own driver
+  (backendkit imports none; pgx is used by the tests only) and creates its table. Session data,
+  tokens included, is encrypted with AES-256-GCM under a required 32-byte key, bound to the session
+  ID. A logout wipes the data and keeps a tombstone for an hour, so a request racing it cannot
+  re-create the session. Same idle and absolute expiry as `MemoryStore`. CI now runs the tests
+  against PostgreSQL 16. Requested by GPWA.
+- `socrate.Client.UpdateUserAsService` updates profile fields of one of the application's
+  members with the service-account token (`PATCH /api/apps/{id}/service/users/{user_id}`, Socrate
+  v1.7.0): the `UpdateProfileRequest` fields, never the email, password or roles. It returns
+  `ErrUserNotInApp` for a non-member and `ErrInvalidProfileUpdate` when Socrate refuses the values;
+  against an older Socrate, an error naming the version. Requested by GPWA.
+- `socrate.Client.Signup` creates a Socrate account with the password the user chose
+  (`POST /api/auth/signup`), as a `user` member of the client's application; Socrate sends a
+  verification e-mail. It returns `ErrUserAlreadyExists` for an email that already has a Socrate
+  account and a `*SignupError`, whose message is safe to show, for a policy refusal. It carries the
+  client attribution, since Socrate rate-limits sign-ups per address. Requested by GPWA.
+- `socrate.ProfileInfo` gains `EmailVerified` (Socrate's userinfo already returns it; backendkit
+  dropped it) and `Picture`, the user's avatar URL. `FullProfile`, `UpdateProfileRequest` and the
+  app member type `User` gain `AvatarURL`. The avatar needs Socrate v1.7.0 (`avatar_url`, OIDC
+  `picture`); against an older server the fields stay empty. Requested by GPWA.
+
 ## [1.16.0] - 2026-10-01
 
 Minor release on the **v1** line: one new method, no breaking change. `socrate.LoginResult.TokenSet()`

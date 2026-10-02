@@ -31,6 +31,7 @@ type FullProfile struct {
 	Department *string    `json:"department,omitempty"`
 	Language   *string    `json:"language,omitempty"`
 	Timezone   *string    `json:"timezone,omitempty"`
+	AvatarURL  *string    `json:"avatar_url,omitempty"` // Socrate v1.7.0 or later
 	LastLogin  *time.Time `json:"last_login,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
 }
@@ -48,6 +49,9 @@ type UpdateProfileRequest struct {
 	Department *string `json:"department,omitempty"`
 	Language   *string `json:"language,omitempty"`
 	Timezone   *string `json:"timezone,omitempty"`
+	// AvatarURL sets the user's picture: an absolute https URL, "" to clear it
+	// (Socrate v1.7.0 or later; an older server ignores it).
+	AvatarURL *string `json:"avatar_url,omitempty"`
 }
 
 // GetProfile returns the full profile of the currently authenticated user.

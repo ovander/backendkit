@@ -404,9 +404,9 @@ Legend — **Auth**: `JWT` = forwards caller JWT (mode A), `M2M` = service-accou
 
 | Method | Auth | Returns | Notes |
 |--------|------|---------|-------|
-| `GetCurrentUserProfile(ctx)` | JWT | `*ProfileInfo` | `/oauth/userinfo`; **nil,nil** on 401/404. Limited OIDC claim set. |
+| `GetCurrentUserProfile(ctx)` | JWT | `*ProfileInfo` | `/oauth/userinfo`; **nil,nil** on 401/404. Limited OIDC claim set, including `EmailVerified` and `Picture` (the avatar URL; Socrate v1.7.0+). |
 | `GetProfile(ctx)` | JWT | `*FullProfile` | full editable profile (`/api/profile`); **nil,nil** on 404. |
-| `UpdateProfile(ctx, UpdateProfileRequest)` | JWT | `*FullProfile` | patches the caller's own profile (name, phone, company, …). |
+| `UpdateProfile(ctx, UpdateProfileRequest)` | JWT | `*FullProfile` | patches the caller's own profile (name, phone, company, …, and `AvatarURL`, an https URL, on Socrate v1.7.0+; `""` clears it). |
 | `IntrospectToken(ctx, token)` | creds | `*IntrospectResponse` | RFC 7662; `.Active` tells you if the token is live. |
 | `RevokeToken(ctx, token)` | creds | `error` | RFC 7009; revokes an access or refresh token. |
 | `Logout(ctx)` | JWT | `error` | invalidates the caller's session (`/api/auth/logout`). |
@@ -420,6 +420,7 @@ confidential clients.
 | Method | Auth | Returns | Notes |
 |--------|------|---------|-------|
 | `ExchangeCode(ctx, code, redirectURI, codeVerifier)` | creds | `*TokenSet` | Authorization Code + PKCE exchange. Pass `""` verifier if no PKCE. |
+| `Signup(ctx, SignupRequest)` | client_id | `*SignupResult` | self-service account with the user's own password, member of this app as `user`; Socrate sends a verification e-mail and sign-in works once verified. `ErrUserAlreadyExists` when the email has a Socrate account (maybe from another app: ask the user to sign in, then add them with `RegisterUser`); `*SignupError` (message safe to show) for a policy refusal. Rate-limited per address: attribute the browser (§7.1). |
 | `RefreshToken(ctx, refreshToken)` | creds | `*TokenSet` | refresh-token grant. |
 | `VerifyMagicLink(ctx, token)` | client_id | `*LoginResult` | completes passwordless login; `ErrMagicLinkAlreadyUsed` (422), `ErrMagicLinkInvalid` (401). `LoginResult.TokenSet()` gives the `*TokenSet` a BFF session is built from. |
 | `AdminLogin(ctx, email, password)` | creds | `*LoginResult` | superadmin portal login; `ErrInvalidCredentials` (401). |
@@ -443,6 +444,7 @@ automatically from `client_id` (cached).
 | `ResendVerification(ctx, userID)` | JWT | `error` | re-sends the verification email. |
 | `ForcePasswordReset(ctx, userID)` | JWT | `error` | triggers a password-reset email. |
 | `GetUserAsService(ctx, userID)` | M2M | `*User` | one of the app's members by numeric id (a token's `sub`); **nil,nil** when not a member (Socrate's 404). Needs a Socrate later than v1.5.3; an older one answers with an error, not nil,nil. |
+| `UpdateUserAsService(ctx, userID, UpdateProfileRequest)` | M2M | `*User` | updates profile fields of one of the app's members (name, phone, company, …, `AvatarURL`); never email, password or roles. The account is shared by every app on Socrate, so the change shows everywhere. `ErrUserNotInApp`, `ErrInvalidProfileUpdate` (Socrate's message wrapped). Needs Socrate v1.7.0. |
 | `RegisterUser(ctx, CreateUserRequest)` | M2M | `*CreateUserResult` | M2M create+invite, with `Name`; `ErrUserAlreadyExists` on 409. |
 | `InviteUserAsService(ctx, ServiceInviteRequest)` | M2M | `*CreateUserResult` | dedicated M2M invite route; no human JWT needed. |
 
@@ -706,9 +708,10 @@ await fetch('/api/reports', {
 What the package guarantees (a request without a valid session gets 401 and is
 never forwarded; CSRF is checked in constant time; only a refresh Socrate
 rejects ends a session) is listed in the README's
-[`bff` reference](../README.md#bff). For more than one BFF instance, replace
-`MemoryStore` and the `pending` map with a shared store; `Session.Snapshot` and
-`NewSessionFromSnapshot` serialise a session.
+[`bff` reference](../README.md#bff). `MemoryStore` loses its sessions on a
+restart; `bff.NewPostgresStore` keeps them in PostgreSQL, encrypted, and is
+shared by several instances (README). With more than one instance, also keep the
+`pending` logins in a shared store.
 [`oauth2-admin/bff`](https://github.com/ovander/oauth2-admin/tree/main/bff)
 is a complete BFF built this way, with logout and token revocation.
 
@@ -724,8 +727,8 @@ User-Agent of every audited event, so without more it logs those as the BFF
 on the token endpoint apply to the BFF as a whole. Client attribution is
 opt-in: put the browser's address and User-Agent on the request context, and
 the `socrate.Client` calls made on the user's behalf (`ExchangeCode`,
-`RefreshToken`, `RevokeToken`, `VerifyMagicLink`, `AdminLogin`, `Logout`) send
-them as `X-Forwarded-For` and `User-Agent`. The `client_credentials` grant,
+`RefreshToken`, `RevokeToken`, `VerifyMagicLink`, `AdminLogin`, `Logout`,
+`Signup`) send them as `X-Forwarded-For` and `User-Agent`. The `client_credentials` grant,
 introspection and userinfo never do: no browser is involved.
 
 ```go
@@ -1249,6 +1252,7 @@ port (8081 in the default deployment).
 | `ResendVerification` / `ForcePasswordReset` | `…/users/{uid}/…` | JWT | Admin |
 | `RegisterUser` / `InviteUserAsService` | `POST …/api/apps/{id}/service/users` | M2M | Admin |
 | `GetUserAsService` | `GET …/api/apps/{id}/service/users/{uid}` | M2M | Admin |
+| `UpdateUserAsService` | `PATCH …/api/apps/{id}/service/users/{uid}` | M2M | Admin |
 | `SendMagicLink` | `POST …/api/apps/{id}/service/magic-link` | M2M | Admin |
 | `ListApps` … `RotateSecret` | `…/api/admin/apps…` | JWT (admin) | Admin |
 | `AdminListUsers` … `RevokeUserTokens` | `…/api/admin/users…` | JWT (superadmin) | Admin |

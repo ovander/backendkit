@@ -13,6 +13,22 @@ jobs:
       matrix:
         go-version: ["1.27.1"]
 
+    # bff.PostgresStore is tested against a real PostgreSQL (its tests fail,
+    # rather than skip, in CI when TEST_DATABASE_URL is missing).
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: backendkit
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: backendkit_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U backendkit" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://backendkit:ci-only@localhost:5432/backendkit_test?sslmode=disable
+
     steps:
       - uses: actions/checkout@v4
 

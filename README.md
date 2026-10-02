@@ -519,7 +519,7 @@ calls acquire a `client_credentials` token automatically and cache it until near
 > `sub=app:{id}` and the Socrate admin routes cannot resolve the app ID at runtime without it.
 > Always set `AppID` in `ClientConfig`; omitting it causes an immediate error on the first
 > service-account call (`InviteUserAsService`, `RegisterUser`, `GetUserAsService`,
-> `SendMagicLink`, `Decide`).
+> `UpdateUserAsService`, `SendMagicLink`, `Decide`).
 
 ```go
 client, err := socrate.NewClient(socrate.ClientConfig{
@@ -559,7 +559,7 @@ call.
 A BFF calls Socrate's token and revoke endpoints server-to-server, so Socrate would audit a login,
 refresh or logout as the BFF (`127.0.0.1`, `Go-http-client/1.1`). Put the browser's address and
 User-Agent on the context and the calls made on a user's behalf — `ExchangeCode`, `RefreshToken`,
-`RevokeToken`, `VerifyMagicLink`, `AdminLogin`, `Logout` — send them as `X-Forwarded-For` and
+`RevokeToken`, `VerifyMagicLink`, `AdminLogin`, `Logout`, `Signup` — send them as `X-Forwarded-For` and
 `User-Agent`. Service-account calls (the `client_credentials` grant), `IntrospectToken` and
 `GetCurrentUserProfile` never do. Without attribution on the context nothing changes.
 
@@ -692,10 +692,23 @@ built this way.
 | Upstream attribution | `NewSingleHostProxy` strips client-supplied IP-attribution headers (`X-Real-IP`, `True-Client-IP`, `Forwarded`), so the browser cannot steer Socrate's rate limits, IP blocks or audit trail; `X-Forwarded-For` is left to the edge proxy |
 | Token-call attribution | Opt-in: `WithClientAttribution(r, ip)` puts the browser's address (as **your** resolver found it) and User-Agent on the request context, so the code exchange, the gateway's refresh and revocation are audited by Socrate as the browser rather than as the BFF (see [client attribution](#client-attribution)) |
 
-**Several instances.** `MemoryStore` is per process. Behind a load balancer, implement
-`SessionStore` (`Get`, `Put`, `Delete`, `Sweep`) over a shared database, serialising sessions
-with `Session.Snapshot` / `NewSessionFromSnapshot`. A `Gateway` must be used by pointer and never
-copied.
+**Sessions that survive a restart, or several instances.** `MemoryStore` is per process: a
+restart signs everyone out. `PostgresStore` keeps sessions in PostgreSQL, through a `*sql.DB` you
+open with the driver of your choice (backendkit imports none):
+
+```go
+db, _ := sql.Open("pgx", os.Getenv("BFF_SESSION_DSN")) // import _ "github.com/jackc/pgx/v5/stdlib"
+key, _ := base64.StdEncoding.DecodeString(os.Getenv("BFF_SESSION_KEY")) // 32 bytes: openssl rand -base64 32
+store, err := bff.NewPostgresStore(ctx, db, key, 30*time.Minute, 8*time.Hour) // creates its table
+```
+
+The session data, tokens included, is encrypted with AES-256-GCM under that key, bound to the
+session ID; changing the key signs everyone out. A logout wipes the data and keeps a tombstone
+for an hour, so a request racing it cannot bring the session back. Expiry is the same as
+`MemoryStore`; call `Sweep` on a ticker. Statement errors read as "no session" and go to the error
+handler (`WithPostgresErrorHandler`; default: the standard logger). For another database,
+implement `SessionStore` (`Get`, `Put`, `Delete`, `Sweep`) with `Session.Snapshot` /
+`NewSessionFromSnapshot`. A `Gateway` must be used by pointer and never copied.
 
 Full API: [pkg.go.dev/…/bff](https://pkg.go.dev/github.com/ovander/backendkit/bff).
 

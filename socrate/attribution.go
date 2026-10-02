@@ -32,7 +32,7 @@ type clientAttributionKey struct{}
 
 // WithClientAttribution returns a copy of ctx carrying a. The Client methods
 // that call Socrate on a user's behalf (ExchangeCode, RefreshToken,
-// RevokeToken, VerifyMagicLink, AdminLogin, Logout) then tell Socrate who the
+// RevokeToken, VerifyMagicLink, AdminLogin, Logout, Signup) then tell Socrate who the
 // browser is, through ApplyClientAttribution.
 //
 // The caller MUST pass the browser address it resolved itself, with its own
