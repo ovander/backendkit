@@ -6,6 +6,10 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-10-02
+
+Minor release on the **v1** line: additive only.
+
 ### Added
 - `jwtauth.WithAudiences(...string)`: audience validation against a set; a token is accepted when
   its `aud` contains at least one expected audience. Empty strings and duplicates are ignored, and
@@ -529,7 +533,8 @@ are rejected. Confirm your Socrate server populates `aud` before enabling it in
 production. Making audience validation required-by-default is deferred to a future
 major (v2.0) and tracked separately.
 
-[Unreleased]: https://github.com/ovander/backendkit/compare/v1.17.1...HEAD
+[Unreleased]: https://github.com/ovander/backendkit/compare/v1.18.0...HEAD
+[1.18.0]: https://github.com/ovander/backendkit/compare/v1.17.1...v1.18.0
 [1.17.1]: https://github.com/ovander/backendkit/compare/v1.17.0...v1.17.1
 [1.17.0]: https://github.com/ovander/backendkit/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/ovander/backendkit/compare/v1.15.1...v1.16.0
