@@ -1039,7 +1039,7 @@ runnable `Example*` functions (visible on
 
 | Symptom | Likely cause & fix |
 |---------|--------------------|
-| **Every request returns 401** | No `Authorization: Bearer <token>` header, an `iss` that doesn't match `SOCRATE_ISSUER`, an `aud` that doesn't contain the `WithAudience` value, or the JWKS URL is unreachable. Stale keys are reused on a *transient* fetch failure, but a wrong/empty JWKS URL fails closed. |
+| **Every request returns 401** | No `Authorization: Bearer <token>` header, an `iss` that doesn't match `SOCRATE_ISSUER`, an `aud` that doesn't contain the `WithAudience` value (or any `WithAudiences` value), or the JWKS URL is unreachable. Stale keys are reused on a *transient* fetch failure, but a wrong/empty JWKS URL fails closed. |
 | **`GetTenantID` is `uuid.Nil` / `GetUserPlan` is always `"freemium"`** | `tenant_id` and `plan` are **custom** claims. A stock Socrate server does not emit them — configure Socrate to include them, or these helpers return their zero/default values by design. |
 | **`GetUserEmail` / `GetUserName` are empty** | Email and name live in the **ID token**, not the access token. For access-token requests, fetch them via `socrate.Client.GetCurrentUserProfile`. |
 | **Compile error passing a logger to `httpware.Logger`** | `Logger` takes the base `*logrus.Logger`; `Recover`, `NewRBAC`, `jwtauth.New`, and `tiering.NewGate` take a `*logrus.Entry`. See the [httpware](#httpware) note. |

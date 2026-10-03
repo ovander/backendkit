@@ -77,6 +77,11 @@ app the token was issued for**.
 
 - Always pass `jwtauth.WithAudience(clientID)`. It is opt-in in backendkit v1 for compatibility;
   without it, `role` (and `httpware.RBAC`, which reads it) can belong to another application.
+- One API serving several of your applications (a portal plus service accounts) passes
+  `jwtauth.WithAudiences(id1, id2, …)` (backendkit v1.18.0): the token's `aud` must contain one of
+  them, and `role` belongs to that one. Read `ctxutil.GetAppRole(ctx, clientID)` when the
+  applications' roles differ; it is `""` for a Socrate admin and for a service account, so handle
+  those two explicitly. Never fall back to no audience check to make a second client work.
 - `app_roles` maps every app's client ID to the user's role in it; `ctxutil.GetAppRole(ctx,
   clientID)` reads yours. Socrate admins and superadmins never appear in `app_roles`: they get
   `role: "admin"` on every application through their global role.
