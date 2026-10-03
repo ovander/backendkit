@@ -295,6 +295,17 @@ Always set `WithAudience` (§4). `app_roles` maps each application's client ID t
 the user's role in it; Socrate admins and superadmins are never listed there and
 get `role: "admin"` on every application through their global role.
 
+A route group that serves several applications of the same Socrate (a portal and
+two service accounts, say) uses `jwtauth.WithAudiences(portalID, svcA, svcB)`
+(backendkit v1.18.0+): a token passes when its `aud` contains at least one of
+them. `role` is then the role in whichever of those applications the token was
+issued for. When their roles mean different things, check
+`ctxutil.GetAppRole(ctx, clientID)` for the application whose permission you are
+enforcing rather than `role`. It returns `""` for a Socrate admin (whose `admin`
+comes from the global role, so `role` is `admin` everywhere) and for a service
+account (`sub` = `app:<id>`, no `app_roles`): handle both explicitly.
+`WithAudiences()` with no non-empty value rejects every token (fail closed).
+
 **To get the user's email/name**, call `socrate.Client.GetCurrentUserProfile`
 (§6.4) — it hits `/oauth/userinfo` with the forwarded JWT. Don't expect them in
 `ctxutil.GetUserEmail` unless the caller authenticated with an ID token.

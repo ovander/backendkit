@@ -6,6 +6,11 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Documentation
+- `jwtauth.WithAudiences` in the client integration guide (§5) and the migration guide (§3.1),
+  including which application `role` belongs to when several audiences are accepted, and the
+  README troubleshooting row for 401s.
+
 ## [1.18.0] - 2026-10-02
 
 Minor release on the **v1** line: additive only.
