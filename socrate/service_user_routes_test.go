@@ -98,3 +98,23 @@ func TestGetUserAsService_MissingRouteIsAnError(t *testing.T) {
 		t.Fatalf("missing route = %+v, %v; want an error naming the Socrate version", u, err)
 	}
 }
+
+// Socrate v1.8.0 adds token_version and locked to the single-member look-up;
+// an older server omits them and the fields stay nil.
+func TestGetUserAsService_TokenVersionAndLocked(t *testing.T) {
+	c, _ := serviceRoutesServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/7") {
+			_, _ = w.Write([]byte(`{"id":7,"email":"m@example.test","role":"user","token_version":4,"locked":false}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":9,"email":"old@example.test","role":"user"}`))
+	})
+	u, err := c.GetUserAsService(context.Background(), "7")
+	if err != nil || u == nil || u.TokenVersion == nil || *u.TokenVersion != 4 || u.Locked == nil || *u.Locked {
+		t.Fatalf("GetUserAsService = %+v, %v; want token_version 4, locked false", u, err)
+	}
+	old, err := c.GetUserAsService(context.Background(), "9")
+	if err != nil || old == nil || old.TokenVersion != nil || old.Locked != nil {
+		t.Fatalf("older Socrate = %+v, %v; want nil TokenVersion and Locked", old, err)
+	}
+}

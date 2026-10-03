@@ -14,6 +14,11 @@ All notable changes to backendkit are documented here. Format:
   the app's own identity. It is the cached token of the service-account calls (exchanged again
   within 30 s of expiry, one exchange for concurrent callers). Requested by Lakebridge (its consumer
   client takes Socrate service tokens without hand-rolling the OAuth exchange).
+- `socrate.User.TokenVersion` and `socrate.User.Locked` (`*int`, `*bool`): set by `GetUser` and
+  `GetUserAsService` from Socrate v1.8.0, nil from lists and older servers. A user token whose
+  `token_version` claim is lower than `*TokenVersion` was revoked, so a resource server can check
+  revocation with its cached service token instead of introspecting every user token
+  (Lakebridge).
 
 ### Changed
 - A `client_credentials` response without an `access_token` is now an error instead of an empty
