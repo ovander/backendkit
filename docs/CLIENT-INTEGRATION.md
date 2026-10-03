@@ -362,7 +362,8 @@ admin/superadmin; a regular user's JWT gets a 403.
 **B. Service-account (M2M)** — the method exchanges your
 `ClientID` + `ClientSecret` for a `client_credentials` token (cached until
 near-expiry) and calls Socrate as the *app itself*, no human involved. Used for
-backend-initiated actions: onboarding, magic links, background sync.
+backend-initiated actions: onboarding, magic links, background sync. `ServiceToken(ctx)` returns
+that token and its expiry, for a backend that calls another service with its own identity.
 
 ```go
 inv, err := client.InviteUserAsService(ctx, socrate.ServiceInviteRequest{
@@ -470,6 +471,7 @@ automatically from `client_id` (cached).
 | Method | Auth | Returns | Notes |
 |--------|------|---------|-------|
 | `Decide(ctx, DecideRequest)` | M2M | `*Decision` | asks Socrate's policy decision point; `ErrPolicyUnavailable` on 503, with the mode kept in the `Decision`. Usually called through `pep` (§10). |
+| `ServiceToken(ctx)` | M2M | `string, time.Time` | the app's own `client_credentials` access token and its expiry, to call another service that accepts Socrate tokens (`sub=app:{id}`). The cached token of the service-account calls, exchanged again within 30 s of expiry; concurrent callers share one exchange. Needs `ClientSecret`. |
 
 #### App (client) management — Admin port · admin JWT
 
@@ -1273,6 +1275,7 @@ port (8081 in the default deployment).
 | `GetThreatMetrics` … `GetIPReputation` | `…/api/admin/security…` | JWT (admin) | Admin |
 | `GetDashboard*` / `*AdminLog*` | `…/api/admin/dashboard…`, `…/api/admin/logs…` | JWT (admin) | Admin |
 | `Decide` | `POST …/api/apps/{id}/service/policy/decide` | M2M | Admin |
+| `ServiceToken` | `POST …/oauth/token` (`client_credentials`) | client secret | OAuth |
 
 ### Roles (highest → lowest privilege)
 

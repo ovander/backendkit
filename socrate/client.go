@@ -278,14 +278,24 @@ type tokenResponse struct {
 // getServiceToken returns a cached service-account token, refreshing it when
 // near-expiry. Thread-safe.
 func (c *Client) getServiceToken(ctx context.Context) (string, error) {
+	tok, _, err := c.ServiceToken(ctx)
+	return tok, err
+}
+
+// ServiceToken returns the application's service-account access token (the client_credentials
+// grant, sub=app:{id}) and the time it expires, for calling another service that accepts Socrate
+// tokens. It is the same token the client's service-account calls use: cached, and exchanged again
+// only when it is missing or expires within 30 s. Concurrent callers share one exchange. It
+// requires ClientSecret; the token is never logged or put in an error.
+func (c *Client) ServiceToken(ctx context.Context) (token string, expiresAt time.Time, err error) {
 	c.svcTokenMu.Lock()
 	defer c.svcTokenMu.Unlock()
 
 	if c.svcToken != "" && time.Now().Add(30*time.Second).Before(c.svcTokenExpiry) {
-		return c.svcToken, nil
+		return c.svcToken, c.svcTokenExpiry, nil
 	}
 	if c.clientSecret == "" {
-		return "", errors.New("socrate: client_secret required for service-account token exchange")
+		return "", time.Time{}, errors.New("socrate: client_secret required for service-account token exchange")
 	}
 
 	data := url.Values{
@@ -296,7 +306,7 @@ func (c *Client) getServiceToken(ctx context.Context) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.oauthURL("/oauth/token"), bytes.NewBufferString(data.Encode()))
 	if err != nil {
-		return "", fmt.Errorf("build token request: %w", err)
+		return "", time.Time{}, fmt.Errorf("build token request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	// Deliberately no ApplyClientAttribution: this is the application acting
@@ -305,19 +315,22 @@ func (c *Client) getServiceToken(ctx context.Context) (string, error) {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("token exchange: %w", err)
+		return "", time.Time{}, fmt.Errorf("token exchange: %w", err)
 	}
 	b, err := readBody(resp)
 	if err != nil {
-		return "", fmt.Errorf("read token response: %w", err)
+		return "", time.Time{}, fmt.Errorf("read token response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("token exchange HTTP %d: %s", resp.StatusCode, b)
+		return "", time.Time{}, fmt.Errorf("token exchange HTTP %d: %s", resp.StatusCode, b)
 	}
 
 	var tr tokenResponse
 	if err := json.Unmarshal(b, &tr); err != nil {
-		return "", fmt.Errorf("decode token response: %w", err)
+		return "", time.Time{}, fmt.Errorf("decode token response: %w", err)
+	}
+	if tr.AccessToken == "" {
+		return "", time.Time{}, errors.New("token exchange: no access_token in the response")
 	}
 	c.svcToken = tr.AccessToken
 	if tr.ExpiresIn > 0 {
@@ -325,7 +338,7 @@ func (c *Client) getServiceToken(ctx context.Context) (string, error) {
 	} else {
 		c.svcTokenExpiry = time.Now().Add(55 * time.Minute)
 	}
-	return c.svcToken, nil
+	return c.svcToken, c.svcTokenExpiry, nil
 }
 
 // ────────────────────────────────────────────────────────────────────────────
