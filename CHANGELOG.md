@@ -6,6 +6,12 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-10-03
+
+Minor release on the **v1** line: additive only. The service-side helpers Lakebridge asked for:
+`ServiceToken` for calling another service with the app's identity, and `User.TokenVersion` for a
+revocation check without introspection (needs Socrate v1.8.0; nil before).
+
 ### Added
 - `(*socrate.Client).ServiceToken(ctx) (token string, expiresAt time.Time, err error)`: the
   application's `client_credentials` access token and its real expiry (the token's `exp` claim,
@@ -559,7 +565,8 @@ are rejected. Confirm your Socrate server populates `aud` before enabling it in
 production. Making audience validation required-by-default is deferred to a future
 major (v2.0) and tracked separately.
 
-[Unreleased]: https://github.com/ovander/backendkit/compare/v1.18.0...HEAD
+[Unreleased]: https://github.com/ovander/backendkit/compare/v1.19.0...HEAD
+[1.19.0]: https://github.com/ovander/backendkit/compare/v1.18.0...v1.19.0
 [1.18.0]: https://github.com/ovander/backendkit/compare/v1.17.1...v1.18.0
 [1.17.1]: https://github.com/ovander/backendkit/compare/v1.17.0...v1.17.1
 [1.17.0]: https://github.com/ovander/backendkit/compare/v1.16.0...v1.17.0
