@@ -29,12 +29,14 @@ package socrate
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -283,8 +285,9 @@ func (c *Client) getServiceToken(ctx context.Context) (string, error) {
 }
 
 // ServiceToken returns the application's service-account access token (the client_credentials
-// grant, sub=app:{id}) and the time it expires, for calling another service that accepts Socrate
-// tokens. It is the same token the client's service-account calls use: cached, and exchanged again
+// grant, sub=app:{id}) and the time it really expires (from expires_in, else the token's exp
+// claim; not the earlier time the cache renews it), for calling another service that accepts
+// Socrate tokens. It is the same token the client's service-account calls use: cached, and exchanged again
 // only when it is missing or expires within 30 s. Concurrent callers share one exchange. It
 // requires ClientSecret; the token is never logged or put in an error.
 func (c *Client) ServiceToken(ctx context.Context) (token string, expiresAt time.Time, err error) {
@@ -333,12 +336,28 @@ func (c *Client) ServiceToken(ctx context.Context) (token string, expiresAt time
 		return "", time.Time{}, errors.New("token exchange: no access_token in the response")
 	}
 	c.svcToken = tr.AccessToken
-	if tr.ExpiresIn > 0 {
-		c.svcTokenExpiry = time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second)
-	} else {
-		c.svcTokenExpiry = time.Now().Add(55 * time.Minute)
-	}
+	c.svcTokenExpiry = tokenExpiry(tr, time.Now())
 	return c.svcToken, c.svcTokenExpiry, nil
+}
+
+// tokenExpiry is when a token from the token endpoint expires: expires_in when the response has
+// it, else the access token's own exp claim (read, not verified: it only times the cache), else 55
+// minutes from now.
+func tokenExpiry(tr tokenResponse, now time.Time) time.Time {
+	if tr.ExpiresIn > 0 {
+		return now.Add(time.Duration(tr.ExpiresIn) * time.Second)
+	}
+	if parts := strings.Split(tr.AccessToken, "."); len(parts) == 3 {
+		if payload, err := base64.RawURLEncoding.DecodeString(parts[1]); err == nil {
+			var claims struct {
+				Exp int64 `json:"exp"`
+			}
+			if json.Unmarshal(payload, &claims) == nil && claims.Exp > now.Unix() {
+				return time.Unix(claims.Exp, 0)
+			}
+		}
+	}
+	return now.Add(55 * time.Minute)
 }
 
 // ────────────────────────────────────────────────────────────────────────────

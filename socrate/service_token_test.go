@@ -2,7 +2,9 @@ package socrate_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -114,5 +116,20 @@ func TestServiceToken_Errors(t *testing.T) {
 	c, _ = tokenServer(t, "svc-tok", 3600, http.StatusOK)
 	if _, _, err := c.ServiceToken(ctx); err == nil {
 		t.Error("cancelled context: no error")
+	}
+}
+
+func TestServiceToken_ExpiryFromTheTokenWithoutExpiresIn(t *testing.T) {
+	exp := time.Now().Add(5 * time.Minute).Truncate(time.Second)
+	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"sub":"app:x","exp":%d}`, exp.Unix())))
+	c, _ := tokenServer(t, "eyJhbGciOiJSUzI1NiJ9."+payload+".sig", 0, http.StatusOK)
+	_, got, err := c.ServiceToken(context.Background())
+	if err != nil || !got.Equal(exp) {
+		t.Errorf("expiry %v, want the token's exp %v (%v)", got, exp, err)
+	}
+	// Neither expires_in nor a readable exp: 55 minutes.
+	c, _ = tokenServer(t, "opaque", 0, http.StatusOK)
+	if _, got, err := c.ServiceToken(context.Background()); err != nil || got.Before(time.Now().Add(54*time.Minute)) {
+		t.Errorf("opaque token expiry %v (%v)", got, err)
 	}
 }

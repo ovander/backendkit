@@ -8,7 +8,8 @@ All notable changes to backendkit are documented here. Format:
 
 ### Added
 - `(*socrate.Client).ServiceToken(ctx) (token string, expiresAt time.Time, err error)`: the
-  application's `client_credentials` access token and its expiry, for calling another service with
+  application's `client_credentials` access token and its real expiry (`expires_in`, else the
+  token's `exp` claim; not the cache's early renewal time), for calling another service with
   the app's own identity. It is the cached token of the service-account calls (exchanged again
   within 30 s of expiry, one exchange for concurrent callers). Requested by Lakebridge (its consumer
   client takes Socrate service tokens without hand-rolling the OAuth exchange).
@@ -16,6 +17,8 @@ All notable changes to backendkit are documented here. Format:
 ### Changed
 - A `client_credentials` response without an `access_token` is now an error instead of an empty
   cached token (fail closed); a working caller never received one.
+- Without `expires_in`, the service-account token is cached until its `exp` claim instead of a
+  fixed 55 minutes (still the fallback for a token without a readable `exp`).
 
 ### Documentation
 - `jwtauth.WithAudiences` in the client integration guide (§5) and the migration guide (§3.1),
