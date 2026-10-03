@@ -471,7 +471,7 @@ automatically from `client_id` (cached).
 | Method | Auth | Returns | Notes |
 |--------|------|---------|-------|
 | `Decide(ctx, DecideRequest)` | M2M | `*Decision` | asks Socrate's policy decision point; `ErrPolicyUnavailable` on 503, with the mode kept in the `Decision`. Usually called through `pep` (§10). |
-| `ServiceToken(ctx)` | M2M | `string, time.Time` | the app's own `client_credentials` access token and its real expiry (`expires_in`, else the token's `exp`), to call another service that accepts Socrate tokens (`sub=app:{id}`). The cached token of the service-account calls, exchanged again within 30 s of expiry; concurrent callers share one exchange. Needs `ClientSecret`. |
+| `ServiceToken(ctx)` | M2M | `string, time.Time` | the app's own `client_credentials` access token and its real expiry (the token's `exp`, else `expires_in` counted from the request), to call another service that accepts Socrate tokens (`sub=app:{id}`). The cached token of the service-account calls, exchanged again within 30 s of expiry; concurrent callers share one exchange. Needs `ClientSecret`. |
 
 #### App (client) management — Admin port · admin JWT
 

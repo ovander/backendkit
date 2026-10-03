@@ -285,11 +285,12 @@ func (c *Client) getServiceToken(ctx context.Context) (string, error) {
 }
 
 // ServiceToken returns the application's service-account access token (the client_credentials
-// grant, sub=app:{id}) and the time it really expires (from expires_in, else the token's exp
-// claim; not the earlier time the cache renews it), for calling another service that accepts
-// Socrate tokens. It is the same token the client's service-account calls use: cached, and exchanged again
-// only when it is missing or expires within 30 s. Concurrent callers share one exchange. It
-// requires ClientSecret; the token is never logged or put in an error.
+// grant, sub=app:{id}) and the time it really expires (the token's exp claim, else expires_in
+// counted from when the request was sent; not the earlier time the cache renews it), for calling
+// another service that accepts Socrate tokens. It is the same token the client's service-account
+// calls use: cached, and exchanged again only when it is missing or expires within 30 s.
+// Concurrent callers share one exchange. It requires ClientSecret; the token is never logged or
+// put in an error.
 func (c *Client) ServiceToken(ctx context.Context) (token string, expiresAt time.Time, err error) {
 	c.svcTokenMu.Lock()
 	defer c.svcTokenMu.Unlock()
@@ -316,6 +317,9 @@ func (c *Client) ServiceToken(ctx context.Context) (token string, expiresAt time
 	// as itself (no browser involved), and the token it yields is cached and
 	// shared across every later caller.
 
+	// Count expires_in from before the request: the token was issued at the
+	// latest when the response left Socrate, so this never overstates its life.
+	sent := time.Now()
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("token exchange: %w", err)
@@ -336,28 +340,36 @@ func (c *Client) ServiceToken(ctx context.Context) (token string, expiresAt time
 		return "", time.Time{}, errors.New("token exchange: no access_token in the response")
 	}
 	c.svcToken = tr.AccessToken
-	c.svcTokenExpiry = tokenExpiry(tr, time.Now())
+	c.svcTokenExpiry = tokenExpiry(tr, sent)
 	return c.svcToken, c.svcTokenExpiry, nil
 }
 
-// tokenExpiry is when a token from the token endpoint expires: expires_in when the response has
-// it, else the access token's own exp claim (read, not verified: it only times the cache), else 55
-// minutes from now.
-func tokenExpiry(tr tokenResponse, now time.Time) time.Time {
-	if tr.ExpiresIn > 0 {
-		return now.Add(time.Duration(tr.ExpiresIn) * time.Second)
-	}
+// unknownTokenLifetime is how long a token whose response gives no expiry at all
+// (neither an exp claim nor expires_in) is trusted: short, so that a guess can
+// never outlive the real token by much. Socrate always sends both.
+const unknownTokenLifetime = time.Minute
+
+// tokenExpiry is when a token from the token endpoint expires. The access token's
+// own exp claim comes first: it is the instant every verifier checks (read, not
+// verified here: it only times the cache and the value ServiceToken returns).
+// Without one, expires_in counted from sent, the moment the request was sent, so
+// the result never lies past the real expiry. Without either, sent plus
+// unknownTokenLifetime.
+func tokenExpiry(tr tokenResponse, sent time.Time) time.Time {
 	if parts := strings.Split(tr.AccessToken, "."); len(parts) == 3 {
 		if payload, err := base64.RawURLEncoding.DecodeString(parts[1]); err == nil {
 			var claims struct {
 				Exp int64 `json:"exp"`
 			}
-			if json.Unmarshal(payload, &claims) == nil && claims.Exp > now.Unix() {
+			if json.Unmarshal(payload, &claims) == nil && claims.Exp > sent.Unix() {
 				return time.Unix(claims.Exp, 0)
 			}
 		}
 	}
-	return now.Add(55 * time.Minute)
+	if tr.ExpiresIn > 0 {
+		return sent.Add(time.Duration(tr.ExpiresIn) * time.Second)
+	}
+	return sent.Add(unknownTokenLifetime)
 }
 
 // ────────────────────────────────────────────────────────────────────────────

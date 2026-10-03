@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -127,9 +128,39 @@ func TestServiceToken_ExpiryFromTheTokenWithoutExpiresIn(t *testing.T) {
 	if err != nil || !got.Equal(exp) {
 		t.Errorf("expiry %v, want the token's exp %v (%v)", got, exp, err)
 	}
-	// Neither expires_in nor a readable exp: 55 minutes.
+	// Neither expires_in nor a readable exp: a short lifetime, never a long guess.
 	c, _ = tokenServer(t, "opaque", 0, http.StatusOK)
-	if _, got, err := c.ServiceToken(context.Background()); err != nil || got.Before(time.Now().Add(54*time.Minute)) {
-		t.Errorf("opaque token expiry %v (%v)", got, err)
+	if _, got, err := c.ServiceToken(context.Background()); err != nil || got.After(time.Now().Add(time.Minute)) {
+		t.Errorf("opaque token expiry %v (%v), want at most a minute ahead", got, err)
+	}
+}
+
+// The token's exp is the instant verifiers check: it wins over expires_in.
+func TestServiceToken_ExpPreferredOverExpiresIn(t *testing.T) {
+	exp := time.Now().Add(5 * time.Minute).Truncate(time.Second)
+	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"sub":"app:x","exp":%d}`, exp.Unix())))
+	c, _ := tokenServer(t, "eyJhbGciOiJSUzI1NiJ9."+payload+".sig", 3600, http.StatusOK)
+	if _, got, err := c.ServiceToken(context.Background()); err != nil || !got.Equal(exp) {
+		t.Errorf("expiry %v, want the token's exp %v (%v)", got, exp, err)
+	}
+}
+
+// expires_in is counted from before the request, so a slow exchange cannot make
+// the returned expiry later than the real one.
+func TestServiceToken_ExpiresInCountedFromTheRequest(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "opaque", "expires_in": 60, "token_type": "Bearer"})
+	}))
+	t.Cleanup(srv.Close)
+	c, err := socrate.NewClient(socrate.ClientConfig{BaseURL: srv.URL, ClientID: "cid", ClientSecret: "test-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The server takes 300 ms; counting from the response would land 300 ms late.
+	limit := time.Now().Add(60*time.Second + 100*time.Millisecond)
+	_, got, err := c.ServiceToken(context.Background())
+	if err != nil || got.After(limit) {
+		t.Errorf("expiry %v is later than request start + expires_in (%v) (%v)", got, limit, err)
 	}
 }
