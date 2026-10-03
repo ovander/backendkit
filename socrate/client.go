@@ -388,6 +388,16 @@ type User struct {
 	LastLogin  *time.Time `json:"last_login,omitempty"`
 	// AvatarURL is the member's picture (Socrate v1.7.0 or later); nil when unset.
 	AvatarURL *string `json:"avatar_url,omitempty"`
+	// TokenVersion is the member's current token version (Socrate v1.8.0 or
+	// later, single-member look-ups GetUser and GetUserAsService only; nil from
+	// lists and older servers). A user token whose token_version claim is lower
+	// was revoked: sign-out, password change or reset, block, "revoke all
+	// tokens", or refresh-token reuse. A single token revoked through
+	// /oauth/revoke is not reflected; introspection is.
+	TokenVersion *int `json:"token_version,omitempty"`
+	// Locked reports whether the account is temporarily locked after failed
+	// sign-ins (same availability as TokenVersion).
+	Locked *bool `json:"locked,omitempty"`
 }
 
 // UserListResponse is the paginated list returned by ListUsers.
