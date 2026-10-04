@@ -247,6 +247,51 @@ func TestPostgresStore_ManagedSchema(t *testing.T) {
 	}
 }
 
+// isSuperuser reports whether the test's database role is a superuser. A
+// superuser holds every privilege whatever is revoked, so privilege tests need
+// a real limited role there (CI's role is a superuser; a local role may not be).
+func isSuperuser(t *testing.T, db *sql.DB) bool {
+	t.Helper()
+	var super bool
+	if err := db.QueryRow(`SELECT rolsuper FROM pg_roles WHERE rolname = current_user`).Scan(&super); err != nil {
+		t.Fatal(err)
+	}
+	return super
+}
+
+// limitedRoleDB creates a NOLOGIN role holding only privs on table, and returns
+// a one-connection *sql.DB running as that role (SET ROLE), as a BFF's
+// least-privilege role would. The role is dropped at the end.
+func limitedRoleDB(t *testing.T, owner *sql.DB, table, privs string) *sql.DB {
+	t.Helper()
+	role := table + "_role"
+	for _, stmt := range []string{
+		"CREATE ROLE " + role + " NOLOGIN",
+		"GRANT USAGE ON SCHEMA public TO " + role,
+		"GRANT " + privs + " ON " + table + " TO " + role,
+	} {
+		if _, err := owner.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = owner.Exec("DROP OWNED BY " + role)
+		_, _ = owner.Exec("DROP ROLE IF EXISTS " + role)
+	})
+	db, err := sql.Open("pgx", os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1) // SET ROLE is per connection: keep exactly one
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec("SET ROLE " + role); err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
 // A managed table the role cannot fully use fails at start-up, naming the
 // missing privilege, instead of at the first sign-in; so does a table without
 // the expected columns.
@@ -256,22 +301,57 @@ func TestPostgresStore_ManagedSchemaChecksTheTable(t *testing.T) {
 	if _, err := db.Exec(fmt.Sprintf(managedTableDDL, table)); err != nil {
 		t.Fatal(err)
 	}
-	// The owner may revoke its own privileges; has_table_privilege then says no.
-	if _, err := db.Exec("REVOKE DELETE ON " + table + " FROM CURRENT_USER"); err != nil {
+	store := db
+	if isSuperuser(t, db) {
+		store = limitedRoleDB(t, db, table, "SELECT, INSERT, UPDATE")
+	} else if _, err := db.Exec("REVOKE DELETE ON " + table + " FROM CURRENT_USER"); err != nil {
+		// The owner may revoke its own privileges; has_table_privilege then says no.
 		t.Fatal(err)
 	}
-	_, err := NewPostgresStore(ctx, db, testKey, 0, 0, WithPostgresTable(table), WithPostgresManagedSchema())
+	_, err := NewPostgresStore(ctx, store, testKey, 0, 0, WithPostgresTable(table), WithPostgresManagedSchema())
 	if err == nil || !strings.Contains(err.Error(), "DELETE") {
 		t.Fatalf("missing DELETE privilege: %v, want a start-up error naming it", err)
 	}
 
-	if _, err := db.Exec("DROP TABLE " + table); err != nil {
+	other := table + "_cols"
+	t.Cleanup(func() { _, _ = db.Exec("DROP TABLE IF EXISTS " + other) })
+	if _, err := db.Exec("CREATE TABLE " + other + " (id text PRIMARY KEY)"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec("CREATE TABLE " + table + " (id text PRIMARY KEY)"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := NewPostgresStore(ctx, db, testKey, 0, 0, WithPostgresTable(table), WithPostgresManagedSchema()); err == nil {
+	if _, err := NewPostgresStore(ctx, db, testKey, 0, 0, WithPostgresTable(other), WithPostgresManagedSchema()); err == nil {
 		t.Fatal("a table without the store's columns was accepted")
 	}
+}
+
+// The layout of #82: a role holding only SELECT, INSERT, UPDATE and DELETE on a
+// table someone else created. The default mode cannot start (it runs DDL); the
+// managed mode starts and serves sessions.
+func TestPostgresStore_ManagedSchemaWithACRUDOnlyRole(t *testing.T) {
+	db, table := pgDB(t)
+	if !isSuperuser(t, db) {
+		t.Skip("needs a database role that can create roles (CI's is a superuser)")
+	}
+	ctx := context.Background()
+	if _, err := db.Exec(fmt.Sprintf(managedTableDDL, table)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(fmt.Sprintf("CREATE INDEX %s_last_seen_idx ON %s (last_seen)", table, table)); err != nil {
+		t.Fatal(err)
+	}
+	crud := limitedRoleDB(t, db, table, "SELECT, INSERT, UPDATE, DELETE")
+
+	if _, err := NewPostgresStore(ctx, crud, testKey, time.Hour, 0, WithPostgresTable(table)); err == nil {
+		t.Fatal("the default mode started with a CRUD-only role; it should need DDL rights")
+	}
+	s, err := NewPostgresStore(ctx, crud, testKey, time.Hour, 0, WithPostgresTable(table), WithPostgresManagedSchema(),
+		WithPostgresErrorHandler(func(op string, err error) { t.Errorf("%s: %v", op, err) }))
+	if err != nil {
+		t.Fatalf("managed mode with a CRUD-only role: %v", err)
+	}
+	s.Put(testSession("c1", time.Now()))
+	if got, ok := s.Get("c1"); !ok || got.RefreshToken() != "refresh-c1" {
+		t.Fatalf("Get = %s, %v", got, ok)
+	}
+	s.Delete("c1")
+	s.Sweep()
 }
