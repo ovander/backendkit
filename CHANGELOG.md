@@ -6,6 +6,12 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Fixed
+- The `WithPostgresManagedSchema` privilege test failed in CI: there the database role is a
+  superuser, which holds every privilege whatever is revoked. The test now runs the store as a
+  real limited role when the role is a superuser, and a new test runs the exact #82 layout (a
+  CRUD-only role on a table it does not own) in CI. No library change.
+
 ### Added
 - `bff.WithPostgresManagedSchema()`: `NewPostgresStore` runs no DDL, for a table created by the
   caller's migrations, so the BFF's database role needs only `SELECT`, `INSERT`, `UPDATE` and
