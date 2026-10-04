@@ -191,3 +191,87 @@ func TestNewPostgresStore_RefusesBadConfig(t *testing.T) {
 		t.Errorf("bad table name: %v", err)
 	}
 }
+
+// pgDB opens TEST_DATABASE_URL and returns a fresh table name, dropped at the
+// end, for tests that create the table themselves.
+func pgDB(t *testing.T) (*sql.DB, string) {
+	t.Helper()
+	s, db := pgStore(t, time.Hour, 8*time.Hour) // skips without TEST_DATABASE_URL
+	table := s.table + "_managed"
+	t.Cleanup(func() { _, _ = db.Exec("DROP TABLE IF EXISTS " + table) })
+	return db, table
+}
+
+const managedTableDDL = `CREATE TABLE %s (
+	id         text        PRIMARY KEY,
+	data       bytea       NOT NULL,
+	created_at timestamptz NOT NULL,
+	last_seen  timestamptz NOT NULL,
+	deleted_at timestamptz
+)`
+
+// With WithPostgresManagedSchema the store runs no DDL: on a table created by
+// a migration (here without the index), sessions round-trip and no index
+// appears; on a missing table it refuses to start and creates nothing.
+func TestPostgresStore_ManagedSchema(t *testing.T) {
+	db, table := pgDB(t)
+	ctx := context.Background()
+
+	if _, err := NewPostgresStore(ctx, db, testKey, time.Hour, 8*time.Hour,
+		WithPostgresTable(table), WithPostgresManagedSchema()); err == nil {
+		t.Fatal("a managed store started on a missing table")
+	}
+	var exists bool
+	if err := db.QueryRow(`SELECT to_regclass($1) IS NOT NULL`, table).Scan(&exists); err != nil || exists {
+		t.Fatalf("the managed store created its table (exists=%v, err=%v)", exists, err)
+	}
+
+	if _, err := db.Exec(fmt.Sprintf(managedTableDDL, table)); err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewPostgresStore(ctx, db, testKey, time.Hour, 8*time.Hour, WithPostgresTable(table),
+		WithPostgresManagedSchema(), WithPostgresErrorHandler(func(op string, err error) { t.Errorf("%s: %v", op, err) }))
+	if err != nil {
+		t.Fatalf("managed store on an existing table: %v", err)
+	}
+	s.Put(testSession("m1", time.Now()))
+	if got, ok := s.Get("m1"); !ok || got.RefreshToken() != "refresh-m1" {
+		t.Fatalf("Get = %s, %v", got, ok)
+	}
+	s.Delete("m1")
+	if _, ok := s.Get("m1"); ok {
+		t.Fatal("deleted session still readable")
+	}
+	if err := db.QueryRow(`SELECT to_regclass($1) IS NOT NULL`, table+"_last_seen_idx").Scan(&exists); err != nil || exists {
+		t.Fatalf("the managed store created the index (exists=%v, err=%v): it must run no DDL", exists, err)
+	}
+}
+
+// A managed table the role cannot fully use fails at start-up, naming the
+// missing privilege, instead of at the first sign-in; so does a table without
+// the expected columns.
+func TestPostgresStore_ManagedSchemaChecksTheTable(t *testing.T) {
+	db, table := pgDB(t)
+	ctx := context.Background()
+	if _, err := db.Exec(fmt.Sprintf(managedTableDDL, table)); err != nil {
+		t.Fatal(err)
+	}
+	// The owner may revoke its own privileges; has_table_privilege then says no.
+	if _, err := db.Exec("REVOKE DELETE ON " + table + " FROM CURRENT_USER"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := NewPostgresStore(ctx, db, testKey, 0, 0, WithPostgresTable(table), WithPostgresManagedSchema())
+	if err == nil || !strings.Contains(err.Error(), "DELETE") {
+		t.Fatalf("missing DELETE privilege: %v, want a start-up error naming it", err)
+	}
+
+	if _, err := db.Exec("DROP TABLE " + table); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("CREATE TABLE " + table + " (id text PRIMARY KEY)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewPostgresStore(ctx, db, testKey, 0, 0, WithPostgresTable(table), WithPostgresManagedSchema()); err == nil {
+		t.Fatal("a table without the store's columns was accepted")
+	}
+}

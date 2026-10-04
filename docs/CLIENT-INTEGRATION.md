@@ -723,7 +723,9 @@ never forwarded; CSRF is checked in constant time; only a refresh Socrate
 rejects ends a session) is listed in the README's
 [`bff` reference](../README.md#bff). `MemoryStore` loses its sessions on a
 restart; `bff.NewPostgresStore` keeps them in PostgreSQL, encrypted, and is
-shared by several instances (README). With more than one instance, also keep the
+shared by several instances (README). For a role holding only `SELECT`, `INSERT`, `UPDATE` and
+`DELETE` on a migration-owned table, add `bff.WithPostgresManagedSchema()`: the store then runs no
+DDL. With more than one instance, also keep the
 `pending` logins in a shared store.
 [`oauth2-admin/bff`](https://github.com/ovander/oauth2-admin/tree/main/bff)
 is a complete BFF built this way, with logout and token revocation.
