@@ -305,8 +305,8 @@ var clientIPHeaders = []string{"X-Real-IP", "True-Client-IP", "Forwarded"}
 func NewSingleHostProxy(upstream *url.URL) *httputil.ReverseProxy {
 	p := httputil.NewSingleHostReverseProxy(upstream)
 	p.FlushInterval = -1
-	director := p.Director
-	p.Director = func(r *http.Request) {
+	director := p.Director               //nolint:staticcheck // SA1019: v1 API, callers wrap Director; a Rewrite-based proxy is a separate, additive change
+	p.Director = func(r *http.Request) { //nolint:staticcheck // SA1019: v1 API, callers wrap Director; a Rewrite-based proxy is a separate, additive change
 		director(r)
 		for _, h := range clientIPHeaders {
 			r.Header.Del(h)

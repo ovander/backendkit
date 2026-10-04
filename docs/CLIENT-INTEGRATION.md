@@ -127,7 +127,7 @@ enforce your own authorization first.
 go get github.com/ovander/backendkit@latest
 ```
 
-Requires **Go 1.25+**.
+Requires **Go 1.27.1+** (the `go` line of backendkit's `go.mod`).
 
 `backendkit` reads **no environment variables itself** — you pass everything to
 constructors explicitly. These are the conventional names used throughout this
