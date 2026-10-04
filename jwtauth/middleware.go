@@ -40,7 +40,8 @@ import (
 //   - TokenVersion  — monotonic counter; incremented on password change / token revocation
 //
 // Claims NOT issued by the default Socrate server (require custom server configuration):
-//   - TenantID — multi-tenancy identifier; will be empty unless the server is extended
+//   - TenantID — multi-tenancy identifier, read from the tenant_id claim, or from the claim
+//     named by WithTenantClaim; empty unless the server is configured to issue it
 //   - Plan     — commercial tier; will be empty, causing GetUserPlan to default to "freemium"
 //
 // Claims only present in ID tokens (OIDC flow), NOT in access tokens:
@@ -58,6 +59,8 @@ type SocrateClaims struct {
 	Amr      []string `json:"amr,omitempty"`
 
 	// Custom claims — require server-side configuration to be populated.
+	// With WithTenantClaim, the middleware replaces TenantID with the value of
+	// the named claim (empty when the token does not carry it).
 	TenantID string `json:"tenant_id,omitempty"`
 	Plan     string `json:"plan,omitempty"`
 
@@ -94,9 +97,14 @@ type Middleware struct {
 	audiences       []string
 	audienceSet     bool
 	revocationCheck RevocationChecker
-	logger          *logrus.Entry
-	httpClient      *http.Client
-	cacheTTL        time.Duration
+	// tenantClaim is the claim the tenant is read from when tenantClaimSet
+	// (WithTenantClaim); otherwise it is tenant_id, decoded into SocrateClaims.
+	// An empty tenantClaim with tenantClaimSet rejects every token.
+	tenantClaim    string
+	tenantClaimSet bool
+	logger         *logrus.Entry
+	httpClient     *http.Client
+	cacheTTL       time.Duration
 
 	// leeway is the clock-skew tolerance applied to time-based claim validation
 	// (exp/nbf/iat). See WithLeeway.
@@ -203,6 +211,32 @@ func WithRevocationCheck(fn RevocationChecker) Option {
 	return func(m *Middleware) { m.revocationCheck = fn }
 }
 
+// WithTenantClaim names the claim the tenant is read from, instead of
+// tenant_id. Use it when the issuer does not emit a plain tenant_id: a stock
+// Socrate projects custom claims through a client's claim mappings under its
+// claims namespace, so a mapping named tenant_id reaches the token as
+// "https://socrate/tenant_id":
+//
+//	auth := jwtauth.New(jwksURL, issuer, logger,
+//	    jwtauth.WithAudience(clientID),
+//	    jwtauth.WithTenantClaim("https://socrate/tenant_id"))
+//
+// The tenant still comes only from the signed token. With this option, the
+// named claim replaces SocrateClaims.TenantID (so a RevocationChecker sees the
+// same tenant as the request context) and a plain tenant_id claim is ignored.
+// The claim must be a string holding a UUID: any other value rejects the token
+// with 401. When the token does not carry the claim, no tenant is set and
+// httpware.RequireTenant rejects the request.
+//
+// Fail closed: an empty or blank name rejects every token (and New logs an
+// error) rather than falling back to tenant_id. The last WithTenantClaim
+// passed to New wins.
+func WithTenantClaim(name string) Option {
+	return func(m *Middleware) {
+		m.tenantClaim, m.tenantClaimSet = strings.TrimSpace(name), true
+	}
+}
+
 // WithLeeway sets the clock-skew tolerance applied to time-based claim checks
 // (exp/nbf/iat). The default is 60s. A negative value is ignored.
 func WithLeeway(d time.Duration) Option {
@@ -272,6 +306,9 @@ func New(jwksURL, issuer string, logger *logrus.Entry, opts ...Option) *Middlewa
 	}
 	if m.audienceSet && len(m.audiences) == 0 && logger != nil {
 		logger.Error("jwtauth: WithAudiences was given no audience — every token is rejected")
+	}
+	if m.tenantClaimSet && m.tenantClaim == "" && logger != nil {
+		logger.Error("jwtauth: WithTenantClaim was given an empty claim name — every token is rejected")
 	}
 	return m
 }
@@ -414,7 +451,47 @@ func (m *Middleware) validateToken(tokenString string) (*SocrateClaims, error) {
 	if err != nil || !tok.Valid {
 		return nil, fmt.Errorf("token invalid")
 	}
+	if m.tenantClaimSet {
+		tenant, err := stringClaim(tokenString, m.tenantClaim)
+		if err != nil {
+			return nil, err
+		}
+		claims.TenantID = tenant
+	}
 	return claims, nil
+}
+
+// stringClaim returns the named claim of an already-verified token: "" when
+// absent, an error when it is not a JSON string. SocrateClaims cannot carry a
+// claim whose name is only known at run time, hence the second decode of the
+// payload, which runs only after the signature has been checked.
+func stringClaim(tokenString, name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("tenant claim not configured")
+	}
+	parts := strings.Split(tokenString, ".")
+	if len(parts) != 3 {
+		return "", fmt.Errorf("token invalid")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("token payload: %w", err)
+	}
+	var all map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &all); err != nil {
+		return "", fmt.Errorf("token payload: %w", err)
+	}
+	raw, ok := all[name]
+	if !ok {
+		return "", nil
+	}
+	// json.Unmarshal accepts null into a string without error; a present claim
+	// that is not a string is rejected, null included.
+	var v string
+	if strings.TrimSpace(string(raw)) == "null" || json.Unmarshal(raw, &v) != nil {
+		return "", fmt.Errorf("claim %q is not a string", name)
+	}
+	return v, nil
 }
 
 func (m *Middleware) getKey(kid string) (*rsa.PublicKey, error) {
