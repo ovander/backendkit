@@ -38,6 +38,7 @@ type PostgresStore struct {
 	absolute time.Duration
 	now      func() time.Time
 	onError  func(op string, err error)
+	managed  bool
 }
 
 // PostgresStoreTombstoneTTL is how long Delete keeps a tombstone that stops a
@@ -65,8 +66,31 @@ func WithPostgresErrorHandler(f func(op string, err error)) PostgresStoreOption 
 	return func(p *PostgresStore) { p.onError = f }
 }
 
+// WithPostgresManagedSchema tells NewPostgresStore that the table and its
+// last_seen index are created by the caller's own migrations, so it runs no
+// DDL and the store can use a role holding only SELECT, INSERT, UPDATE and
+// DELETE on the table: PostgreSQL checks CREATE on the schema, and table
+// ownership for the index, even when the objects already exist.
+// NewPostgresStore then checks that the table has the expected columns and
+// that the role holds each of those four privileges, and fails otherwise. The
+// migration must create, under the configured name (WithPostgresTable;
+// unqualified, so resolved through the role's search_path):
+//
+//	CREATE TABLE <table> (
+//		id         text        PRIMARY KEY,
+//		data       bytea       NOT NULL,
+//		created_at timestamptz NOT NULL,
+//		last_seen  timestamptz NOT NULL,
+//		deleted_at timestamptz
+//	);
+//	CREATE INDEX <table>_last_seen_idx ON <table> (last_seen);
+func WithPostgresManagedSchema() PostgresStoreOption {
+	return func(p *PostgresStore) { p.managed = true }
+}
+
 // NewPostgresStore checks the connection, creates the table if it does not
-// exist and returns the store. key encrypts the session data and must be 32
+// exist (or, with WithPostgresManagedSchema, checks the existing one) and
+// returns the store. key encrypts the session data and must be 32
 // bytes (AES-256); keep it with the BFF's other secrets. Changing it signs
 // every user out. idle and absolute are as for NewMemoryStore; zero disables
 // that bound.
@@ -101,6 +125,12 @@ func NewPostgresStore(ctx context.Context, db *sql.DB, key []byte, idle, absolut
 	if err := db.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("bff: postgres store: %w", err)
 	}
+	if p.managed {
+		if err := p.checkManagedTable(ctx); err != nil {
+			return nil, fmt.Errorf("bff: postgres store: managed table %s: %w", p.table, err)
+		}
+		return p, nil
+	}
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS `+p.table+` (
 		id         text        PRIMARY KEY,
 		data       bytea       NOT NULL,
@@ -114,6 +144,32 @@ func NewPostgresStore(ctx context.Context, db *sql.DB, key []byte, idle, absolut
 		return nil, fmt.Errorf("bff: postgres store: create index: %w", err)
 	}
 	return p, nil
+}
+
+// checkManagedTable verifies, without DDL, that the migration-owned table has
+// the columns the store uses and that the role may read and write it, so a
+// missing grant fails at start-up rather than at the first sign-in.
+func (p *PostgresStore) checkManagedTable(ctx context.Context) error {
+	// The table name is a checked identifier; LIMIT 0 reads no row.
+	rows, err := p.db.QueryContext(ctx, `SELECT id, data, created_at, last_seen, deleted_at FROM `+p.table+` LIMIT 0`)
+	if err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	// One call per privilege: given a list, has_table_privilege is true when
+	// any of them is held.
+	for _, priv := range []string{"SELECT", "INSERT", "UPDATE", "DELETE"} {
+		var ok bool
+		if err := p.db.QueryRowContext(ctx, `SELECT has_table_privilege($1, $2)`, p.table, priv).Scan(&ok); err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("the role lacks %s on the table", priv)
+		}
+	}
+	return nil
 }
 
 func opContext() (context.Context, context.CancelFunc) {

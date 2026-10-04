@@ -6,6 +6,14 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Added
+- `bff.WithPostgresManagedSchema()`: `NewPostgresStore` runs no DDL, for a table created by the
+  caller's migrations, so the BFF's database role needs only `SELECT`, `INSERT`, `UPDATE` and
+  `DELETE` on it (PostgreSQL checks `CREATE` on the schema, and table ownership for the index,
+  even when they already exist). At start-up the store checks the table's columns and each of
+  those four privileges, and fails naming what is missing. The default is unchanged. Requested by
+  Lakebridge (#82).
+
 ### Changed
 - **The module now requires Go 1.27.1** (`go 1.27.1`; was `go 1.25.0` with `toolchain go1.27.1`).
   Importers need Go 1.27.1 or later; with `GOTOOLCHAIN=auto`, the default, an older `go` command

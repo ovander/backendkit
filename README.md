@@ -716,6 +716,14 @@ handler (`WithPostgresErrorHandler`; default: the standard logger). For another 
 implement `SessionStore` (`Get`, `Put`, `Delete`, `Sweep`) with `Session.Snapshot` /
 `NewSessionFromSnapshot`. A `Gateway` must be used by pointer and never copied.
 
+**Least-privilege database role.** By default `NewPostgresStore` runs `CREATE TABLE IF NOT EXISTS`
+and `CREATE INDEX IF NOT EXISTS`, which PostgreSQL refuses to a role without `CREATE` on the schema
+and ownership of the table, even when both already exist. When your migrations own the table, pass
+`bff.WithPostgresManagedSchema()`: the store runs no DDL, checks at start-up that the table has its
+columns and that the role holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on it, and fails
+otherwise. The `CREATE TABLE` and `CREATE INDEX` your migration must run are in its doc comment;
+the table name (`WithPostgresTable`) is unqualified, so put the schema in the role's `search_path`.
+
 Full API: [pkg.go.dev/…/bff](https://pkg.go.dev/github.com/ovander/backendkit/bff).
 
 ---
