@@ -29,6 +29,12 @@ older Go need `GOTOOLCHAIN=auto` (the default) or an upgrade. No exported identi
   `httputil.ReverseProxy.Director` (deprecated since Go 1.26, still supported): callers wrap it,
   so moving to `Rewrite` needs a new, additive constructor. CI pins govulncheck to v1.8.0.
 
+### Fixed
+- The `WithPostgresManagedSchema` privilege test failed in CI: there the database role is a
+  superuser, which holds every privilege whatever is revoked. The test now runs the store as a
+  real limited role when the role is a superuser, and a new test runs the exact #82 layout (a
+  CRUD-only role on a table it does not own) in CI. No library change.
+
 ## [1.19.0] - 2026-10-03
 
 Minor release on the **v1** line: additive only. The service-side helpers Lakebridge asked for:
