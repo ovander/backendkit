@@ -6,6 +6,15 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Added
+- `jwtauth.WithTenantClaim(name)`: read the tenant from the named claim instead of `tenant_id`.
+  A stock Socrate has no tenant model and issues claim mappings under its claims namespace, so a
+  tenant reaches tokens as `https://socrate/tenant_id`, which the middleware ignored:
+  `httpware.RequireTenant` then refused every token. With the option, the named claim replaces
+  `SocrateClaims.TenantID` (the revocation check sees it too) and a plain `tenant_id` is ignored;
+  a value that is not a UUID string, `null` included, is a 401; an empty name rejects every token.
+  The default is unchanged. Reported by Lakebridge (go-oauth2 #308).
+
 ## [1.20.0] - 2026-10-04
 
 Minor release on the **v1** line: additive API, and a new minimum Go. `bff.WithPostgresManagedSchema`

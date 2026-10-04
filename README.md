@@ -643,6 +643,13 @@ auth := jwtauth.New(jwksURL, issuer, logger,
 - **Revocation.** Local signature validation alone keeps a token valid until its `exp`, even
   after logout or a password change. The check typically compares `token_version` with the
   user's current value; with none configured, behaviour is unchanged.
+- **Tenant claim.** The tenant is read from `tenant_id` by default. A stock Socrate has no tenant
+  model: a tenant reaches tokens only through a client's claim mapping
+  (`"tenant_id": "user.attributes.tenant_id"`), under Socrate's claims namespace, as
+  `https://socrate/tenant_id`. `WithTenantClaim("https://socrate/tenant_id")` reads that claim
+  instead; a plain `tenant_id` is then ignored. The value must be a UUID string (anything else
+  is a 401); without the claim no tenant is set and `httpware.RequireTenant` rejects the request.
+  An empty name rejects every token (fail closed).
 - **Authentication facts.** `auth_time` and `amr` (when and how the user authenticated) are
   exposed as `ctxutil.GetAuthTime` / `ctxutil.GetAMR`. They are what a step-up or MFA check needs;
   `pep` uses them to honour policy obligations.
@@ -1050,7 +1057,7 @@ runnable `Example*` functions (visible on
 | Symptom | Likely cause & fix |
 |---------|--------------------|
 | **Every request returns 401** | No `Authorization: Bearer <token>` header, an `iss` that doesn't match `SOCRATE_ISSUER`, an `aud` that doesn't contain the `WithAudience` value (or any `WithAudiences` value), or the JWKS URL is unreachable. Stale keys are reused on a *transient* fetch failure, but a wrong/empty JWKS URL fails closed. |
-| **`GetTenantID` is `uuid.Nil` / `GetUserPlan` is always `"freemium"`** | `tenant_id` and `plan` are **custom** claims. A stock Socrate server does not emit them — configure Socrate to include them, or these helpers return their zero/default values by design. |
+| **`GetTenantID` is `uuid.Nil` / `GetUserPlan` is always `"freemium"`** | `tenant_id` and `plan` are **custom** claims. A stock Socrate server does not emit them — configure Socrate to include them, or these helpers return their zero/default values by design. Socrate's claim mappings issue them under its namespace (`https://socrate/tenant_id`): pass `jwtauth.WithTenantClaim("https://socrate/tenant_id")`. |
 | **`GetUserEmail` / `GetUserName` are empty** | Email and name live in the **ID token**, not the access token. For access-token requests, fetch them via `socrate.Client.GetCurrentUserProfile`. |
 | **Compile error passing a logger to `httpware.Logger`** | `Logger` takes the base `*logrus.Logger`; `Recover`, `NewRBAC`, `jwtauth.New`, and `tiering.NewGate` take a `*logrus.Entry`. See the [httpware](#httpware) note. |
 | **Service-account call errors with "AppID must be set"** | Set `AppID` in `ClientConfig` (`SOCRATE_APP_ID`). The `/api/admin/apps` lookup needs a human-admin JWT, so a service token cannot resolve the app ID at runtime. |

@@ -240,8 +240,8 @@ auth := jwtauth.New(jwksURL, issuer, log,
 )
 
 // On tenant-scoped route groups, guarantee a tenant is present so no nil-tenant
-// request reaches your handlers. Precondition: Socrate issues the `tenant_id`
-// claim (the default server does not — see §5).
+// request reaches your handlers. Precondition: Socrate issues a tenant claim
+// (the default server does not — see §5), read with jwtauth.WithTenantClaim.
 r.Group(func(r chi.Router) {
 	r.Use(auth.Handler)
 	r.Use(httpware.RequireTenant) // 401 when ctxutil.GetTenantID == uuid.Nil
@@ -284,7 +284,7 @@ This trips people up, so it's worth stating plainly:
 |-------|------------------|-------|
 | `sub`, `role`, `app_roles`, `token_version` | ✅ always | the dependable identity set |
 | `email`, `name` | ❌ **not** in access tokens | present in ID tokens / `userinfo` only |
-| `tenant_id` | ⚠️ only if the server is configured to issue it | else `ctxutil.GetTenantID` → `uuid.Nil` |
+| `tenant_id` | ⚠️ only if the server is configured to issue it | else `ctxutil.GetTenantID` → `uuid.Nil`; Socrate issues it as `https://socrate/tenant_id` (see "Tenant isolation", §9) |
 | `plan` | ⚠️ only if the server is configured to issue it | else `ctxutil.GetUserPlan` → `"freemium"` |
 
 **`role` is the user's role in the application the token was issued for**, not in yours.
@@ -1074,15 +1074,38 @@ upgrade URL.
 For multi-tenant apps, mount `httpware.RequireTenant` after `auth.Handler` on
 tenant-scoped route groups. It returns **401** when no tenant is in context
 (`ctxutil.GetTenantID == uuid.Nil`), so a handler can never run against the nil
-tenant. Requires Socrate to issue the `tenant_id` claim (see §5).
+tenant. Requires Socrate to issue a tenant claim (see §5).
+
+Socrate has no tenant model of its own. The tenant comes from a user attribute,
+projected into your client's tokens by a claim mapping, and every mapped claim
+carries Socrate's claims namespace (`CLAIMS_NAMESPACE`, default
+`https://socrate/`):
+
+1. A global admin sets each user's tenant:
+   `PUT /api/admin/users/{id}/attributes` with
+   `{"attributes": {"tenant_id": "<tenant UUID>"}}`.
+2. Your client declares the mapping:
+   `"claim_mappings": {"tenant_id": "user.attributes.tenant_id"}`.
+   Its access tokens then carry `"https://socrate/tenant_id": "<tenant UUID>"`.
+3. The middleware reads that claim:
 
 ```go
+auth := jwtauth.New(jwksURL, issuer, logger,
+	jwtauth.WithAudience(clientID),
+	jwtauth.WithTenantClaim("https://socrate/tenant_id"))
+
 r.Group(func(r chi.Router) {
 	r.Use(auth.Handler)
 	r.Use(httpware.RequireTenant)
 	r.Mount("/orders", ordersRouter)
 })
 ```
+
+Without `WithTenantClaim` the middleware reads a plain `tenant_id`, which a
+stock Socrate never issues, so `RequireTenant` refuses every request. With it, a
+plain `tenant_id` in the token is ignored; a value that is not a UUID string is
+rejected with 401; an empty name rejects every token. Use the namespace your
+Socrate is configured with, if it is not the default.
 
 ---
 
