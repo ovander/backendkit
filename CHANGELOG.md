@@ -6,6 +6,14 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Changed
+- **The module now requires Go 1.27.1** (`go 1.27.1`; was `go 1.25.0` with `toolchain go1.27.1`).
+  Importers need Go 1.27.1 or later; with `GOTOOLCHAIN=auto`, the default, an older `go` command
+  downloads it. backendkit's language level and `GODEBUG` defaults now match the Go it is built
+  and tested with. No exported identifier changes. `bff.NewSingleHostProxy` keeps its
+  `httputil.ReverseProxy.Director` (deprecated since Go 1.26, still supported): callers wrap it,
+  so moving to `Rewrite` needs a new, additive constructor. CI pins govulncheck to v1.8.0.
+
 ## [1.19.0] - 2026-10-03
 
 Minor release on the **v1** line: additive only. The service-side helpers Lakebridge asked for:

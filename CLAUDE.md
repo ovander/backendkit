@@ -54,7 +54,8 @@ golangci-lint run ./...        # v2.14.0, built with Go 1.27.1
 govulncheck ./...
 ```
 
-CI also fails if the Go version it runs differs from the `toolchain` line in `go.mod`.
+CI also fails if the Go version it runs differs from `go.mod`'s (its `go` line, or a `toolchain`
+line when there is one).
 
 ## Git workflow
 

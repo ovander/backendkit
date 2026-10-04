@@ -8,7 +8,7 @@ policy decisions. Contributions are accepted under the project's licence,
 
 ## Development setup
 
-Requirements: Go (the `toolchain` line in `go.mod` downloads the exact version, 1.27.1). The
+Requirements: Go (the `go` line in `go.mod` downloads the exact version, 1.27.1). The
 tests need no database and no network service.
 
 ```bash

@@ -38,11 +38,13 @@ jobs:
           go-version: ${{ matrix.go-version }}
           cache: true
 
-      # go.mod's toolchain line and this workflow's Go version must agree:
-      # fail loudly if they drift rather than test on one Go and pin another.
+      # go.mod's Go (its toolchain line, or the go line when there is none —
+      # go mod tidy drops a toolchain line equal to the go line) and this
+      # workflow's Go must agree: fail loudly if they drift rather than test on
+      # one Go and pin another.
       - name: Toolchain matches go.mod
         run: |
-          want=$(awk '/^toolchain /{print $2}' go.mod)
+          want=$(awk '/^toolchain /{t=$2} /^go /{g="go"$2} END{print (t != "" ? t : g)}' go.mod)
           got=$(go env GOVERSION)
           echo "go.mod toolchain: $want · CI: $got"
           test -n "$want" && test "$got" = "$want"
@@ -94,8 +96,11 @@ jobs:
         with:
           go-version: "1.27.1"
           cache: true
+      # Pinned, so a scanner release never changes the result unannounced. It
+      # is built with the job's Go (1.27.1): a govulncheck built with an older
+      # Go refuses a module targeting a newer one.
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
       - name: Run govulncheck
         run: govulncheck ./...
 

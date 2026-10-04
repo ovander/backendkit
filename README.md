@@ -119,9 +119,9 @@ to Socrate (`bff`, `pep`) and `ailang` for `aigateway`.
 
 ## Requirements
 
-- **Go 1.25 or later** to import the module (the `go` line in `go.mod`). Build your service with
-  a Go release that still receives security fixes. backendkit itself is built and tested with
-  Go 1.27.1, pinned by the `toolchain` line.
+- **Go 1.27.1 or later** to import the module (the `go` line in `go.mod`, which is also the Go
+  backendkit is built and tested with). With `GOTOOLCHAIN=auto`, the default, an older `go`
+  command downloads it.
 - **A Socrate server** for the packages that talk to it: `jwtauth`, `socrate`, `bff` and `pep`.
   They are written for Socrate's API and claims, not as a generic OAuth toolkit. The other
   packages, `ctxutil` included, are plain Go helpers and work without Socrate.
@@ -140,7 +140,7 @@ go get github.com/ovander/backendkit@v1.19.0
 // go.mod
 module github.com/your-org/my-service
 
-go 1.25
+go 1.27.1
 
 require github.com/ovander/backendkit v1.19.0
 ```
