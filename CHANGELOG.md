@@ -6,6 +6,13 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-10-05
+
+Minor release on the **v1** line: additive API only. `jwtauth.WithTenantClaim` reads the tenant from
+a namespaced claim, which is how a stock Socrate issues it (`https://socrate/tenant_id`); without it
+`httpware.RequireTenant` refused every Socrate token. No exported identifier changes; the default
+is unchanged.
+
 ### Added
 - `jwtauth.WithTenantClaim(name)`: read the tenant from the named claim instead of `tenant_id`.
   A stock Socrate has no tenant model and issues claim mappings under its claims namespace, so a
@@ -603,7 +610,8 @@ are rejected. Confirm your Socrate server populates `aud` before enabling it in
 production. Making audience validation required-by-default is deferred to a future
 major (v2.0) and tracked separately.
 
-[Unreleased]: https://github.com/ovander/backendkit/compare/v1.20.0...HEAD
+[Unreleased]: https://github.com/ovander/backendkit/compare/v1.21.0...HEAD
+[1.21.0]: https://github.com/ovander/backendkit/compare/v1.20.0...v1.21.0
 [1.20.0]: https://github.com/ovander/backendkit/compare/v1.19.0...v1.20.0
 [1.19.0]: https://github.com/ovander/backendkit/compare/v1.18.0...v1.19.0
 [1.18.0]: https://github.com/ovander/backendkit/compare/v1.17.1...v1.18.0
