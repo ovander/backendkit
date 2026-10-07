@@ -8,7 +8,8 @@ policy decisions. Contributions are accepted under the project's licence,
 
 ## Development setup
 
-Requirements: Go (the `go` line in `go.mod` downloads the exact version, 1.27.1). The
+Requirements: Go (the `toolchain` line in `go.mod` downloads the exact version, 1.27.1; the
+`go` line, 1.26.0, is the floor importers need, and CI also tests on it). The
 tests need no database and no network service.
 
 ```bash
