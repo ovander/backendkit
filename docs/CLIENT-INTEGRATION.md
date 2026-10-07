@@ -230,7 +230,8 @@ auth := jwtauth.New(jwksURL, issuer, log,
 
 	// Make logout / password-change / admin-revoke take effect before token exp
 	// instead of waiting it out. Compare the token_version claim against your
-	// store; return an error to reject.
+	// store; return an error to reject. ctxutil.GetRawJWT(ctx) is available here
+	// too, for a checker that introspects the token at Socrate instead.
 	jwtauth.WithRevocationCheck(func(ctx context.Context, c *jwtauth.SocrateClaims) error {
 		if c.TokenVersion < store.CurrentTokenVersion(ctx, c.Subject) {
 			return errors.New("token_version superseded")

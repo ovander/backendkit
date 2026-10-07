@@ -13,6 +13,15 @@ All notable changes to backendkit are documented here. Format:
   new exchange before the cache's 30 s renewal window. Thread-safe, under the existing token lock;
   no existing call changes. Requested by Lakebridge (#88, item 3).
 
+### Changed
+- **A `jwtauth.RevocationChecker` can read the raw bearer token.** The middleware now stores it
+  with `ctxutil.WithRawJWT` before the revocation check instead of after, so a checker that
+  introspects the token at Socrate (`/oauth/introspect`) gets it from `ctxutil.GetRawJWT(ctx)`
+  instead of copying the `Authorization` header in a middleware of its own. Ordering only: the
+  identity values are still set only after the check passes, a refused token still gets a 401
+  before the handler, and handlers see the same context as before. No exported identifier
+  changes. Requested by Lakebridge (#88, item 1).
+
 ## [1.21.0] - 2026-10-05
 
 Minor release on the **v1** line: additive API only. `jwtauth.WithTenantClaim` reads the tenant from
