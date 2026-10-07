@@ -6,6 +6,15 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Changed
+- **The minimum Go is back to 1.26.0** (`go 1.26.0`, with `toolchain go1.27.1`). v1.20.0 had raised
+  the `go` line to 1.27.1, which forced every importer onto Go 1.27.1. A consumer that could not
+  move yet was stuck on v1.19.0 (Lakebridge's `client/`). The floor is now the oldest supported Go
+  release, and CI builds and tests on it (`Build & Test (1.26.0)`, `GOTOOLCHAIN=local`). It checks
+  that the job runs exactly go.mod's `go` line, as the main job already checks the `toolchain` line.
+  backendkit is still developed and tested with Go 1.27.1. No code or API change; lowering the
+  minimum breaks no caller (#93).
+
 ## [1.22.0] - 2026-10-07
 
 Minor release on the **v1** line: additive API only, the three options Lakebridge asked for (#88).
