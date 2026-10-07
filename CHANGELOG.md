@@ -7,14 +7,6 @@ All notable changes to backendkit are documented here. Format:
 ## [Unreleased]
 
 ### Changed
-<<<<<<< HEAD
-- **`socrate.Client` forwards the request id on every call**, not only `Decide`. The id comes from
-  `ctxutil.GetRequestID` and is sent as `X-Correlation-ID`, the header Socrate reads. It covers
-  user-JWT and service-account calls, the `client_credentials` exchange (with the id of the
-  request that triggered it), code exchange and refresh, magic-link and admin login, signup,
-  logout, revocation and introspection. An id that is not a short run of printable ASCII is not
-  sent, so it can never make the call fail. No exported identifier changes (#96).
-=======
 - **The minimum Go is back to 1.26.0** (`go 1.26.0`, with `toolchain go1.27.1`). v1.20.0 had raised
   the `go` line to 1.27.1, which forced every importer onto Go 1.27.1. A consumer that could not
   move yet was stuck on v1.19.0 (Lakebridge's `client/`). The floor is now the oldest supported Go
@@ -22,7 +14,12 @@ All notable changes to backendkit are documented here. Format:
   that the job runs exactly go.mod's `go` line, as the main job already checks the `toolchain` line.
   backendkit is still developed and tested with Go 1.27.1. No code or API change; lowering the
   minimum breaks no caller (#93).
->>>>>>> origin/main
+- **`socrate.Client` forwards the request id on every call**, not only `Decide`. The id comes from
+  `ctxutil.GetRequestID` and is sent as `X-Correlation-ID`, the header Socrate reads. It covers
+  user-JWT and service-account calls, the `client_credentials` exchange (with the id of the
+  request that triggered it), code exchange and refresh, magic-link and admin login, signup,
+  logout, revocation and introspection. An id that is not a short run of printable ASCII is not
+  sent, so it can never make the call fail. No exported identifier changes (#96).
 
 ## [1.22.0] - 2026-10-07
 
