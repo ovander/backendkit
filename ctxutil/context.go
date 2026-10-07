@@ -38,6 +38,7 @@ const (
 	rawJWTKey       contextKey = "raw_jwt"
 	authTimeKey     contextKey = "auth_time"
 	amrKey          contextKey = "amr"
+	audiencesKey    contextKey = "audiences"
 )
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -210,6 +211,26 @@ func WithAMR(ctx context.Context, amr []string) context.Context {
 func GetAMR(ctx context.Context) []string {
 	if v, ok := ctx.Value(amrKey).([]string); ok {
 		return v
+	}
+	return nil
+}
+
+// WithAudiences stores the audiences a token was accepted for. Set by
+// jwtauth.Middleware: with an audience check configured (WithAudience,
+// WithAudiences) it is the token's aud values that are in the configured set,
+// in the token's order and without duplicates; without one, every aud value of
+// the token. A caller that derives behaviour from the audience, and needs
+// exactly one, checks len(GetAudiences(ctx)) == 1. The slice is copied.
+func WithAudiences(ctx context.Context, aud []string) context.Context {
+	return context.WithValue(ctx, audiencesKey, append([]string(nil), aud...))
+}
+
+// GetAudiences returns the audiences stored by WithAudiences, or nil when
+// absent (e.g. a token without aud, or a test that bypasses the middleware).
+// The result is a copy: changing it does not change the context.
+func GetAudiences(ctx context.Context) []string {
+	if v, ok := ctx.Value(audiencesKey).([]string); ok && len(v) > 0 {
+		return append([]string(nil), v...)
 	}
 	return nil
 }

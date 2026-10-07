@@ -398,6 +398,7 @@ role      = ctxutil.GetAppRole(ctx, "my-app-id") // role within a specific app, 
 ver      := ctxutil.GetTokenVersion(ctx)        // int — 0 when absent
 authTime := ctxutil.GetAuthTime(ctx)            // int64 Unix seconds — 0 when absent
 amr      := ctxutil.GetAMR(ctx)                 // []string, e.g. ["pwd", "mfa"] — nil when absent
+aud      := ctxutil.GetAudiences(ctx)           // []string — the audiences the token was accepted for
 ```
 
 > `GetTenantTier`/`WithTenantTier` are deprecated aliases for `GetUserPlan`/`WithUserPlan`; use
@@ -639,7 +640,10 @@ auth := jwtauth.New(jwksURL, issuer, logger,
   the same Socrate would validate, with that application's `role`. Once it is set, a token
   without `aud` is rejected. A route group that serves several applications uses
   `WithAudiences(a, b, …)`: the token's `aud` must contain at least one of them; called with no
-  non-empty audience it rejects every token (fail closed).
+  non-empty audience it rejects every token (fail closed). `ctxutil.GetAudiences` then tells the
+  handler which of them the token was accepted for (its `aud` values in the configured set; every
+  `aud` value when no audience check is configured), so a route group that derives behaviour from
+  the audience can require exactly one (`len(aud) == 1`) without decoding the token again.
 - **Revocation.** Local signature validation alone keeps a token valid until its `exp`, even
   after logout or a password change. The check typically compares `token_version` with the
   user's current value; with none configured, behaviour is unchanged.

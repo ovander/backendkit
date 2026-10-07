@@ -6,6 +6,14 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Added
+- `ctxutil.WithAudiences` / `ctxutil.GetAudiences`: the audiences a token was accepted for, set
+  by `jwtauth.Middleware`. With `WithAudience` / `WithAudiences` they are the token's `aud` values
+  that are in the configured set (token order, no duplicates); without an audience check, every
+  `aud` value. A route group serving several applications can tell which one a token is for, and
+  require exactly one, without decoding the payload again. `GetAudiences` returns a copy, or nil
+  when absent. Requested by Lakebridge (#88, item 2).
+
 ## [1.21.0] - 2026-10-05
 
 Minor release on the **v1** line: additive API only. `jwtauth.WithTenantClaim` reads the tenant from

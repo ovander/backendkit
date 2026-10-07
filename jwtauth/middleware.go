@@ -392,6 +392,10 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 		if claims.Amr != nil {
 			ctx = ctxutil.WithAMR(ctx, claims.Amr)
 		}
+		// aud — the audiences the token was accepted for (ctxutil.GetAudiences).
+		if aud := m.acceptedAudiences(claims.Audience); len(aud) > 0 {
+			ctx = ctxutil.WithAudiences(ctx, aud)
+		}
 
 		// Store raw JWT so downstream clients (e.g. socrate.Client) can forward
 		// it without re-parsing. Use ctxutil.GetRawJWT to retrieve it.
@@ -404,6 +408,23 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 // ────────────────────────────────────────────────────────────────────────────
 // Internal helpers
 // ────────────────────────────────────────────────────────────────────────────
+
+// acceptedAudiences returns the token's aud values the token was accepted for:
+// those in the configured set when an audience check is configured, else all
+// of them; in the token's order, without duplicates or empty values.
+func (m *Middleware) acceptedAudiences(tokenAud []string) []string {
+	var out []string
+	for _, a := range tokenAud {
+		if a == "" || slices.Contains(out, a) {
+			continue
+		}
+		if m.audienceSet && !slices.Contains(m.audiences, a) {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
+}
 
 func extractBearer(r *http.Request) (string, error) {
 	h := r.Header.Get("Authorization")
