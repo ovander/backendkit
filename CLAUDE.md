@@ -55,7 +55,9 @@ govulncheck ./...
 ```
 
 CI also fails if the Go version it runs differs from `go.mod`'s (its `go` line, or a `toolchain`
-line when there is one).
+line when there is one). A second job builds and tests on the `go` line itself, the floor
+importers need (the oldest supported Go release); do not raise it without a reason recorded in the
+changelog.
 
 ## Git workflow
 

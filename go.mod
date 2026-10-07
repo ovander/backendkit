@@ -1,9 +1,12 @@
 module github.com/ovander/backendkit
 
-// The go line is both the minimum Go for every module that imports backendkit
-// and the exact Go it is built and tested with (with no toolchain line, it is
-// the toolchain too). CI checks it against the Go CI runs.
-go 1.27.1
+// The go line is the minimum Go for every module that imports backendkit: the
+// oldest supported Go release, so a consumer is never forced onto a newer Go by
+// a library upgrade (CI builds and tests on it). The toolchain line is the Go
+// backendkit is built and tested with; CI checks it against the Go CI runs.
+go 1.26.0
+
+toolchain go1.27.1
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
