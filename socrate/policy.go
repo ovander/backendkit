@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-
-	"github.com/ovander/backendkit/ctxutil"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -111,9 +109,7 @@ func (c *Client) Decide(ctx context.Context, req DecideRequest) (*Decision, erro
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+tok)
 	httpReq.Header.Set("Content-Type", "application/json")
-	if id := ctxutil.GetRequestID(ctx); id != "" {
-		httpReq.Header.Set("X-Correlation-ID", id)
-	}
+	setCorrelationID(httpReq)
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {

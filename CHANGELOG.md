@@ -6,6 +6,14 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Changed
+- **`socrate.Client` forwards the request id on every call**, not only `Decide`. The id comes from
+  `ctxutil.GetRequestID` and is sent as `X-Correlation-ID`, the header Socrate reads. It covers
+  user-JWT and service-account calls, the `client_credentials` exchange (with the id of the
+  request that triggered it), code exchange and refresh, magic-link and admin login, signup,
+  logout, revocation and introspection. An id that is not a short run of printable ASCII is not
+  sent, so it can never make the call fail. No exported identifier changes (#96).
+
 ## [1.22.0] - 2026-10-07
 
 Minor release on the **v1** line: additive API only, the three options Lakebridge asked for (#88).

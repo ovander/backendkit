@@ -146,6 +146,7 @@ func (c *Client) doHTTP(ctx context.Context, token, method, fullURL string, body
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
+	setCorrelationID(req)
 	return c.httpClient.Do(req)
 }
 
@@ -315,7 +316,9 @@ func (c *Client) ServiceToken(ctx context.Context) (token string, expiresAt time
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	// Deliberately no ApplyClientAttribution: this is the application acting
 	// as itself (no browser involved), and the token it yields is cached and
-	// shared across every later caller.
+	// shared across every later caller. The correlation id is that of the
+	// request that triggered the exchange.
+	setCorrelationID(req)
 
 	// Count expires_in from before the request: the token was issued at the
 	// latest when the response left Socrate, so this never overstates its life.
@@ -896,6 +899,7 @@ func (c *Client) RevokeToken(ctx context.Context, token string) error {
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	ApplyClientAttribution(req)
+	setCorrelationID(req)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("revoke: %w", err)
@@ -927,6 +931,7 @@ func (c *Client) IntrospectToken(ctx context.Context, token string) (*Introspect
 		return nil, fmt.Errorf("build introspect request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	setCorrelationID(req)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("introspect: %w", err)

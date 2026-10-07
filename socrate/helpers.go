@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+
+	"github.com/ovander/backendkit/ctxutil"
 )
 
 // statusIn reports whether code is one of allowed. When allowed is empty it
@@ -43,4 +45,28 @@ func decodeJSON(resp *http.Response, label string, out interface{}, okCodes ...i
 		}
 	}
 	return nil
+}
+
+// correlationIDHeader is the header Socrate reads a caller's request id from.
+const correlationIDHeader = "X-Correlation-ID"
+
+// maxCorrelationIDLength bounds the request id forwarded to Socrate.
+const maxCorrelationIDLength = 128
+
+// setCorrelationID forwards the request id in req's context
+// (ctxutil.GetRequestID, set by httpware.RequestID) as X-Correlation-ID, so a
+// call can be traced across the service and Socrate. Nothing is sent when
+// there is no id, or when it is not a short run of printable ASCII: an id the
+// HTTP client would refuse must never make the call itself fail.
+func setCorrelationID(req *http.Request) {
+	id := ctxutil.GetRequestID(req.Context())
+	if id == "" || len(id) > maxCorrelationIDLength {
+		return
+	}
+	for i := 0; i < len(id); i++ {
+		if id[i] < 0x21 || id[i] > 0x7e {
+			return
+		}
+	}
+	req.Header.Set(correlationIDHeader, id)
 }
