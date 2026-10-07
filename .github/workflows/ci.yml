@@ -11,7 +11,9 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go-version: ["1.27.1"]
+        # 1.27.1 is the toolchain backendkit is built and tested with; 1.26.0
+        # is the floor (go.mod's go line), the oldest Go an importer may use.
+        go-version: ["1.27.1", "1.26.0"]
 
     # bff.PostgresStore is tested against a real PostgreSQL (its tests fail,
     # rather than skip, in CI when TEST_DATABASE_URL is missing).
@@ -28,6 +30,9 @@ jobs:
           --health-timeout 5s --health-retries 10
     env:
       TEST_DATABASE_URL: postgres://backendkit:ci-only@localhost:5432/backendkit_test?sslmode=disable
+      # The floor job must really run on the floor: without this, the go
+      # command would switch to the toolchain line (1.27.1).
+      GOTOOLCHAIN: ${{ matrix.go-version == '1.26.0' && 'local' || 'auto' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -43,10 +48,21 @@ jobs:
       # workflow's Go must agree: fail loudly if they drift rather than test on
       # one Go and pin another.
       - name: Toolchain matches go.mod
+        if: matrix.go-version != '1.26.0'
         run: |
           want=$(awk '/^toolchain /{t=$2} /^go /{g="go"$2} END{print (t != "" ? t : g)}' go.mod)
           got=$(go env GOVERSION)
           echo "go.mod toolchain: $want · CI: $got"
+          test -n "$want" && test "$got" = "$want"
+
+      # The floor job runs exactly go.mod's go line, so the line cannot drift
+      # from what CI proves.
+      - name: Floor matches go.mod's go line
+        if: matrix.go-version == '1.26.0'
+        run: |
+          want=$(awk '/^go /{print "go"$2}' go.mod)
+          got=$(go env GOVERSION)
+          echo "go.mod go line: $want · CI: $got"
           test -n "$want" && test "$got" = "$want"
 
       - name: Verify go.sum is up to date
