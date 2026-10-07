@@ -127,3 +127,26 @@ func TestGetLogger_RoundTrip(t *testing.T) {
 		t.Error("GetLogger did not return the stored entry")
 	}
 }
+
+func TestGetAudiences_RoundTripIsCopied(t *testing.T) {
+	in := []string{"console", "portal"}
+	ctx := ctxutil.WithAudiences(context.Background(), in)
+	in[0] = "changed"
+	got := ctxutil.GetAudiences(ctx)
+	if len(got) != 2 || got[0] != "console" || got[1] != "portal" {
+		t.Fatalf("GetAudiences = %q, want [console portal]", got)
+	}
+	got[1] = "changed"
+	if again := ctxutil.GetAudiences(ctx); again[1] != "portal" {
+		t.Errorf("changing the result changed the context: %q", again)
+	}
+}
+
+func TestGetAudiences_Missing(t *testing.T) {
+	if got := ctxutil.GetAudiences(context.Background()); got != nil {
+		t.Errorf("expected nil, got %q", got)
+	}
+	if got := ctxutil.GetAudiences(ctxutil.WithAudiences(context.Background(), nil)); got != nil {
+		t.Errorf("expected nil for an empty set, got %q", got)
+	}
+}
