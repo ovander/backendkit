@@ -363,7 +363,9 @@ admin/superadmin; a regular user's JWT gets a 403.
 `ClientID` + `ClientSecret` for a `client_credentials` token (cached until
 near-expiry) and calls Socrate as the *app itself*, no human involved. Used for
 backend-initiated actions: onboarding, magic links, background sync. `ServiceToken(ctx)` returns
-that token and its expiry, for a backend that calls another service with its own identity.
+that token and its expiry, for a backend that calls another service with its own identity. If that
+service answers 401 before the token expires, call `InvalidateServiceToken()` and then
+`ServiceToken(ctx)` again: the cached token is dropped and a new one exchanged.
 
 ```go
 inv, err := client.InviteUserAsService(ctx, socrate.ServiceInviteRequest{
@@ -472,6 +474,7 @@ automatically from `client_id` (cached).
 |--------|------|---------|-------|
 | `Decide(ctx, DecideRequest)` | M2M | `*Decision` | asks Socrate's policy decision point; `ErrPolicyUnavailable` on 503, with the mode kept in the `Decision`. Usually called through `pep` (§10). |
 | `ServiceToken(ctx)` | M2M | `string, time.Time` | the app's own `client_credentials` access token and its real expiry (the token's `exp`, else `expires_in` counted from the request), to call another service that accepts Socrate tokens (`sub=app:{id}`). The cached token of the service-account calls, exchanged again within 30 s of expiry; concurrent callers share one exchange. Needs `ClientSecret`. |
+| `InvalidateServiceToken()` | M2M | — | drops the cached service-account token, so the next `ServiceToken` or service-account call exchanges a new one (after a 401 for a token revoked before its `exp`). No network call; thread-safe. |
 
 #### App (client) management — Admin port · admin JWT
 

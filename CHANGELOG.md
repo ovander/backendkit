@@ -6,6 +6,13 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Added
+- `(*socrate.Client).InvalidateServiceToken()`: drops the cached service-account token, so the next
+  `ServiceToken` (or service-account) call exchanges a new one. For a peer that refuses the token
+  with 401 before its `exp`, e.g. after it was revoked at Socrate; until now nothing could force a
+  new exchange before the cache's 30 s renewal window. Thread-safe, under the existing token lock;
+  no existing call changes. Requested by Lakebridge (#88, item 3).
+
 ## [1.21.0] - 2026-10-05
 
 Minor release on the **v1** line: additive API only. `jwtauth.WithTenantClaim` reads the tenant from
