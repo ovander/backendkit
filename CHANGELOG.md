@@ -13,6 +13,11 @@ All notable changes to backendkit are documented here. Format:
   `aud` value. A route group serving several applications can tell which one a token is for, and
   require exactly one, without decoding the payload again. `GetAudiences` returns a copy, or nil
   when absent. Requested by Lakebridge (#88, item 2).
+- `(*socrate.Client).InvalidateServiceToken()`: drops the cached service-account token, so the next
+  `ServiceToken` (or service-account) call exchanges a new one. For a peer that refuses the token
+  with 401 before its `exp`, e.g. after it was revoked at Socrate; until now nothing could force a
+  new exchange before the cache's 30 s renewal window. Thread-safe, under the existing token lock;
+  no existing call changes. Requested by Lakebridge (#88, item 3).
 
 ### Changed
 - **A `jwtauth.RevocationChecker` can read the raw bearer token.** The middleware now stores it

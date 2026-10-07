@@ -516,7 +516,9 @@ decision point) and will not work against Keycloak, Auth0 or other providers.
 The client uses a dual-auth strategy: user-scoped calls forward the caller's JWT; service-account
 calls acquire a `client_credentials` token automatically and cache it until near-expiry.
 `ServiceToken(ctx)` returns that token and its expiry, for calling another service that accepts
-Socrate tokens as the application itself.
+Socrate tokens as the application itself. When that service refuses the token with 401 before its
+expiry (a token revoked at Socrate), `InvalidateServiceToken()` drops the cached token so the next
+call exchanges a new one.
 
 > **`AppID` is required for all service-account methods.** Service-account tokens carry
 > `sub=app:{id}` and the Socrate admin routes cannot resolve the app ID at runtime without it.

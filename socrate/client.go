@@ -344,6 +344,21 @@ func (c *Client) ServiceToken(ctx context.Context) (token string, expiresAt time
 	return c.svcToken, c.svcTokenExpiry, nil
 }
 
+// InvalidateServiceToken drops the cached service-account token, so the next
+// ServiceToken call (or service-account call) exchanges a new one. Use it when
+// a peer refuses the token with 401 before its exp, e.g. after the token was
+// revoked at Socrate: invalidate, then call ServiceToken again. Calling it
+// when nothing is cached is a no-op. Thread-safe; an exchange in progress
+// finishes and its token is cached as usual. Every call drops whatever is
+// cached, including a token another goroutine has just obtained, so callers
+// refused at the same time may cause a few extra exchanges (harmless).
+func (c *Client) InvalidateServiceToken() {
+	c.svcTokenMu.Lock()
+	defer c.svcTokenMu.Unlock()
+	c.svcToken = ""
+	c.svcTokenExpiry = time.Time{}
+}
+
 // unknownTokenLifetime is how long a token whose response gives no expiry at all
 // (neither an exp claim nor expires_in) is trusted: short, so that a guess can
 // never outlive the real token by much. Socrate always sends both.
