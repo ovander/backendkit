@@ -184,7 +184,7 @@ func main() {
 	r := chi.NewRouter()
 
 	// Cross-cutting middleware — order matters.
-	r.Use(httpware.RequestID)             // X-Request-ID in/out + ctxutil.GetRequestID
+	r.Use(httpware.RequestID)             // X-Request-ID in/out (invalid ids replaced) + ctxutil.GetRequestID
 	r.Use(httpware.Recover(log))          // panic → 500 instead of a dropped conn
 	r.Use(httpware.SecurityHeaders)       // HSTS, X-Content-Type-Options, etc.
 	r.Use(httpware.Timeout(30 * time.Second))

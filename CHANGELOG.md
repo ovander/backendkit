@@ -6,6 +6,14 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Security
+- **`httpware.RequestID` validates the incoming `X-Request-ID`.** It keeps the id only if it is 1 to
+  128 characters of `A-Za-z0-9._:-` (UUIDs, ULIDs and similar). Otherwise it generates a UUID, as
+  when the header is absent. Until now any value was stored, logged, echoed back and forwarded:
+  line breaks, control characters or kilobytes of text could reach logs and audit fields. The
+  request is never rejected. `httpware.ValidRequestID` and `httpware.MaxRequestIDLength` expose the
+  rule (#95; Socrate's counterpart is ovander/go-oauth2#321).
+
 ## [1.22.0] - 2026-10-07
 
 Minor release on the **v1** line: additive API only, the three options Lakebridge asked for (#88).
