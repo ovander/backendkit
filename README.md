@@ -390,7 +390,7 @@ email     := ctxutil.GetUserEmail(ctx)   // string (ID-token flows only)
 name      := ctxutil.GetUserName(ctx)    // string (ID-token flows only)
 requestID := ctxutil.GetRequestID(ctx)   // string
 logger    := ctxutil.GetLogger(ctx)      // *logrus.Entry — falls back to standard logger
-rawJWT    := ctxutil.GetRawJWT(ctx)      // string — bearer token for forwarding to socrate.Client
+rawJWT    := ctxutil.GetRawJWT(ctx)      // string — bearer token for forwarding (also inside a RevocationChecker)
 
 // Multi-app role claims (app_roles), the monotonic token_version and authentication facts:
 roles    := ctxutil.GetAppRoles(ctx)            // map[string]string — clientID → role
@@ -642,7 +642,9 @@ auth := jwtauth.New(jwksURL, issuer, logger,
   non-empty audience it rejects every token (fail closed).
 - **Revocation.** Local signature validation alone keeps a token valid until its `exp`, even
   after logout or a password change. The check typically compares `token_version` with the
-  user's current value; with none configured, behaviour is unchanged.
+  user's current value; with none configured, behaviour is unchanged. The checker's context
+  already carries the raw token (`ctxutil.GetRawJWT`), so it can also introspect the token at
+  Socrate (`/oauth/introspect`); the identity values are set only after the check passes.
 - **Tenant claim.** The tenant is read from `tenant_id` by default. A stock Socrate has no tenant
   model: a tenant reaches tokens only through a client's claim mapping
   (`"tenant_id": "user.attributes.tenant_id"`), under Socrate's claims namespace, as

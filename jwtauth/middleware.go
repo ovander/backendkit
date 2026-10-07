@@ -142,6 +142,11 @@ type Option func(*Middleware)
 // passed, receiving the request context and the parsed claims. Returning a
 // non-nil error rejects the request with 401.
 //
+// The context already carries the raw bearer token (ctxutil.GetRawJWT), so a
+// checker can introspect it at Socrate (/oauth/introspect). The identity
+// values (ctxutil.GetUserID and the like) are not set yet: they are injected
+// only once the check has passed.
+//
 // Use it to enforce revocation that signature validation alone cannot — most
 // commonly comparing claims.TokenVersion against the current value for
 // claims.Subject (incremented on password change / logout), or consulting a
@@ -330,17 +335,20 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 			return
 		}
 
+		// Store the raw JWT so downstream clients (e.g. socrate.Client) can
+		// forward it without re-parsing; use ctxutil.GetRawJWT to retrieve it.
+		// It is set before the revocation check so a checker can introspect it.
+		ctx := ctxutil.WithRawJWT(r.Context(), token)
+
 		// Optional revocation check (e.g. token_version / denylist). Runs after
 		// validation so a revoked token never has its identity injected.
 		if m.revocationCheck != nil {
-			if err := m.revocationCheck(r.Context(), claims); err != nil {
+			if err := m.revocationCheck(ctx, claims); err != nil {
 				m.logger.WithError(err).Warn("token revoked")
 				apierror.Unauthorized("token revoked").WriteJSON(w)
 				return
 			}
 		}
-
-		ctx := r.Context()
 
 		// tenant_id — only present when the server is configured to issue it.
 		if claims.TenantID != "" {
@@ -392,10 +400,6 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 		if claims.Amr != nil {
 			ctx = ctxutil.WithAMR(ctx, claims.Amr)
 		}
-
-		// Store raw JWT so downstream clients (e.g. socrate.Client) can forward
-		// it without re-parsing. Use ctxutil.GetRawJWT to retrieve it.
-		ctx = ctxutil.WithRawJWT(ctx, token)
 
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
