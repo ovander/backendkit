@@ -6,6 +6,13 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-10-07
+
+Minor release on the **v1** line: additive API only, the three options Lakebridge asked for (#88).
+A `RevocationChecker` can read the raw token (to introspect it at Socrate), `ctxutil.GetAudiences`
+tells a handler which audience a token was accepted for, and `(*socrate.Client).InvalidateServiceToken`
+forces a new service-token exchange. No changed signature and no changed default.
+
 ### Added
 - `ctxutil.WithAudiences` / `ctxutil.GetAudiences`: the audiences a token was accepted for, set
   by `jwtauth.Middleware`. With `WithAudience` / `WithAudiences` they are the token's `aud` values
@@ -632,7 +639,8 @@ are rejected. Confirm your Socrate server populates `aud` before enabling it in
 production. Making audience validation required-by-default is deferred to a future
 major (v2.0) and tracked separately.
 
-[Unreleased]: https://github.com/ovander/backendkit/compare/v1.21.0...HEAD
+[Unreleased]: https://github.com/ovander/backendkit/compare/v1.22.0...HEAD
+[1.22.0]: https://github.com/ovander/backendkit/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/ovander/backendkit/compare/v1.20.0...v1.21.0
 [1.20.0]: https://github.com/ovander/backendkit/compare/v1.19.0...v1.20.0
 [1.19.0]: https://github.com/ovander/backendkit/compare/v1.18.0...v1.19.0
