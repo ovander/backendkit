@@ -270,6 +270,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	role  := ctxutil.GetUserRole(ctx)  // "admin" | "manager" | "editor" | "viewer" | "user"
 	plan  := ctxutil.GetUserPlan(ctx)  // "freemium" (default) | "pro" | "enterprise"
 	jwt   := ctxutil.GetRawJWT(ctx)    // the raw bearer token, for forwarding
+	aud   := ctxutil.GetAudiences(ctx) // the audiences the token was accepted for
 
 	// Per-app role (multi-app users): pass the app's client_id.
 	appRole := ctxutil.GetAppRole(ctx, "my-app-client-id")

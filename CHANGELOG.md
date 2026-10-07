@@ -7,6 +7,12 @@ All notable changes to backendkit are documented here. Format:
 ## [Unreleased]
 
 ### Added
+- `ctxutil.WithAudiences` / `ctxutil.GetAudiences`: the audiences a token was accepted for, set
+  by `jwtauth.Middleware`. With `WithAudience` / `WithAudiences` they are the token's `aud` values
+  that are in the configured set (token order, no duplicates); without an audience check, every
+  `aud` value. A route group serving several applications can tell which one a token is for, and
+  require exactly one, without decoding the payload again. `GetAudiences` returns a copy, or nil
+  when absent. Requested by Lakebridge (#88, item 2).
 - `(*socrate.Client).InvalidateServiceToken()`: drops the cached service-account token, so the next
   `ServiceToken` (or service-account) call exchanges a new one. For a peer that refuses the token
   with 401 before its `exp`, e.g. after it was revoked at Socrate; until now nothing could force a
