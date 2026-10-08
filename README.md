@@ -793,6 +793,16 @@ shadow rollout can never take the application down), refuse `503 policy_unavaila
 `FailOpenWhenModeUnknown` is set. A request with no user token in context (pep mounted before
 jwtauth) is refused with 401, never decided as the application.
 
+**A floor under Socrate's mode.** `POLICY_MODE` is server-wide. An application that must enforce
+its rules while Socrate is still `off` or `shadow` for others sets `MinimumMode`: the effective
+mode is the stricter of the two (`off` < `shadow` < `enforce`). With `MinimumMode: "enforce"`, in
+every server mode, a deny is `403 policy_denied`, an unmet obligation is `elevation_required` or
+`mfa_required`, and an unreachable Socrate is `503 policy_unavailable`, even before any decision
+has reported a mode. `New` refuses `MinimumMode: "enforce"` combined with
+`FailOpenWhenModeUnknown`. With `"shadow"`, a server in `off` is treated as `shadow`. Socrate
+evaluates its rules in every mode, so these are real decisions; while `POLICY_MODE=off` Socrate
+does not record them in its decision log (ovander/go-oauth2#323).
+
 `ContextFor` sends the request's peer address as `context.ip`: behind a proxy, resolve
 `RemoteAddr` with a trusted real-IP middleware first — a spoofable `X-Forwarded-For` must never
 reach a policy. `CheckAsApp` decides for the application itself (no user), e.g. in a background
