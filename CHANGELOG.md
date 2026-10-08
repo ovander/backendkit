@@ -6,6 +6,13 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+## [1.25.0] - 2026-10-08
+
+Minor release on the **v1** line: additive API only. `bff.PendingLoginStore` keeps pending logins
+(PKCE verifier, `LoginBinding` nonce, return path) between `/login` and the callback, in a bounded
+memory store or in PostgreSQL shared by several instances (encrypted, single-use). No changed
+signature and no changed default.
+
 ### Added
 - **`bff.PendingLoginStore`: pending logins that survive across instances** (#98). Between `/login`
   and the callback a BFF keeps the PKCE verifier, the `LoginBinding` nonce and the return path,
@@ -742,7 +749,8 @@ are rejected. Confirm your Socrate server populates `aud` before enabling it in
 production. Making audience validation required-by-default is deferred to a future
 major (v2.0) and tracked separately.
 
-[Unreleased]: https://github.com/ovander/backendkit/compare/v1.24.0...HEAD
+[Unreleased]: https://github.com/ovander/backendkit/compare/v1.25.0...HEAD
+[1.25.0]: https://github.com/ovander/backendkit/compare/v1.24.0...v1.25.0
 [1.24.0]: https://github.com/ovander/backendkit/compare/v1.23.0...v1.24.0
 [1.23.0]: https://github.com/ovander/backendkit/compare/v1.22.0...v1.23.0
 [1.22.0]: https://github.com/ovander/backendkit/compare/v1.21.0...v1.22.0
