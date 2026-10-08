@@ -105,6 +105,9 @@ type Config struct {
 type Enforcer struct {
 	cfg      Config
 	lastMode atomic.Value // string
+	// pepModeAccepted records that Socrate's last answer advertised
+	// pep_mode, so MinimumMode can be reported for its decision log.
+	pepModeAccepted atomic.Bool
 }
 
 // New returns an Enforcer.
@@ -164,7 +167,7 @@ func (e *Enforcer) CheckAsApp(ctx context.Context, action string, resource socra
 }
 
 func (e *Enforcer) check(ctx context.Context, req socrate.DecideRequest) error {
-	d, err := e.cfg.Decider.Decide(ctx, req)
+	d, err := e.decide(ctx, req)
 	if err != nil {
 		denial := e.unavailable(ctx, req.Action, d, err)
 		e.report(ctx, req.Action, d, denial != nil, err)
@@ -207,6 +210,29 @@ func (e *Enforcer) check(ctx context.Context, req socrate.DecideRequest) error {
 		e.report(ctx, req.Action, d, true, nil)
 		return denial
 	}
+}
+
+// decide asks the Decider. When MinimumMode is stricter than off and Socrate
+// has advertised pep_mode_accepted, the floor is sent as pep_mode so Socrate
+// records the decision under it (go-oauth2 v1.13.0+). If Socrate rejects such
+// a request as malformed (e.g. a downgraded server), the flag is cleared and
+// the request is asked once more without it, so reporting the floor can never
+// cost a decision.
+func (e *Enforcer) decide(ctx context.Context, req socrate.DecideRequest) (*socrate.Decision, error) {
+	sent := e.cfg.MinimumMode != socrate.PolicyModeOff && e.pepModeAccepted.Load()
+	if sent {
+		req.PEPMode = e.cfg.MinimumMode
+	}
+	d, err := e.cfg.Decider.Decide(ctx, req)
+	if sent && errors.Is(err, socrate.ErrPolicyRequestRejected) {
+		e.pepModeAccepted.Store(false)
+		req.PEPMode = ""
+		d, err = e.cfg.Decider.Decide(ctx, req)
+	}
+	if err == nil && d != nil {
+		e.pepModeAccepted.Store(d.PEPModeAccepted)
+	}
+	return d, err
 }
 
 // unavailable decides what an error means, from the mode Socrate reported

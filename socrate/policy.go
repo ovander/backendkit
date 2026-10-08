@@ -34,6 +34,11 @@ const (
 // policy it can evaluate (503). The returned Decision still carries the mode.
 var ErrPolicyUnavailable = errors.New("socrate: policy unavailable")
 
+// ErrPolicyRequestRejected is returned (wrapped) by Decide when Socrate
+// rejects the request as malformed (400), e.g. a field an older Socrate does
+// not know, an invalid subject token or an action in the admin namespace.
+var ErrPolicyRequestRejected = errors.New("socrate: policy decide request rejected")
+
 // PolicySubject names the user a decision is about. Prefer Token — the user's
 // own access token, which Socrate verifies and which supplies how and when the
 // user authenticated. UserID works too, but then rules about scopes, amr or
@@ -63,6 +68,12 @@ type DecideRequest struct {
 	Action   string         `json:"action"`
 	Resource PolicyResource `json:"resource"`
 	Context  PolicyContext  `json:"context"`
+	// PEPMode is the mode the caller's enforcement point applies when it is
+	// stricter than Socrate's (pep.Config.MinimumMode), so Socrate records the
+	// decision under it even while its own POLICY_MODE is off. It never
+	// changes the answer. Send it only to a Socrate whose answers carry
+	// PEPModeAccepted (v1.13.0+): an older one rejects it with 400.
+	PEPMode string `json:"pep_mode,omitempty"`
 }
 
 // Decision is Socrate's answer.
@@ -73,6 +84,8 @@ type Decision struct {
 	Obligations   []string `json:"obligations,omitempty"`
 	PolicyVersion int64    `json:"policy_version"`
 	Mode          string   `json:"mode"`
+	// PEPModeAccepted reports that this Socrate accepts DecideRequest.PEPMode.
+	PEPModeAccepted bool `json:"pep_mode_accepted,omitempty"`
 }
 
 // Decide asks Socrate's policy decision point about req, authenticated as this
@@ -85,8 +98,9 @@ type Decision struct {
 // as X-Correlation-ID, which is how a denial is found in Socrate's decision log.
 //
 // Errors: ErrPolicyUnavailable (503; the Decision carries the mode),
-// or an error describing a rejected request (unknown subject, invalid token,
-// malformed action).
+// ErrPolicyRequestRejected (400: malformed request, invalid subject token,
+// admin-namespace action), or an error describing another rejection (e.g.
+// unknown subject).
 func (c *Client) Decide(ctx context.Context, req DecideRequest) (*Decision, error) {
 	appID, err := c.getAppIDAsService(ctx)
 	if err != nil {
@@ -131,6 +145,8 @@ func (c *Client) Decide(ctx context.Context, req DecideRequest) (*Decision, erro
 		var d Decision
 		_ = json.Unmarshal(b, &d) // best effort: the mode, if present
 		return &d, ErrPolicyUnavailable
+	case http.StatusBadRequest:
+		return nil, fmt.Errorf("%w: decide HTTP %d: %s", ErrPolicyRequestRejected, resp.StatusCode, b)
 	default:
 		return nil, fmt.Errorf("decide HTTP %d: %s", resp.StatusCode, b)
 	}

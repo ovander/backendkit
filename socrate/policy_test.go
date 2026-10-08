@@ -1,6 +1,7 @@
 package socrate_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -87,5 +88,43 @@ func TestDecide_RejectedRequest_IsAnError(t *testing.T) {
 	d, err := c.Decide(t.Context(), socrate.DecideRequest{Subject: &socrate.PolicySubject{UserID: 9}, Action: "a"})
 	if err == nil || d != nil || !strings.Contains(err.Error(), "404") {
 		t.Fatalf("d=%+v err=%v", d, err)
+	}
+}
+
+func TestDecide_PEPModeRoundTrip(t *testing.T) {
+	var body map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "svc", "expires_in": 3600})
+	})
+	mux.HandleFunc("/api/apps/7/service/policy/decide", func(w http.ResponseWriter, r *http.Request) {
+		body = nil
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body["pep_mode"] == "strict" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"pep_mode must be off, shadow or enforce"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"allow":true,"mode":"off","pep_mode_accepted":true}`))
+	})
+	srv, closeFn := newTestServer(mux)
+	defer closeFn()
+	c, err := socrate.NewClient(socrate.ClientConfig{BaseURL: srv.URL, AdminBaseURL: srv.URL, ClientID: "cid", ClientSecret: "s", AppID: "7"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d, err := c.Decide(context.Background(), socrate.DecideRequest{Action: "a"})
+	if err != nil || !d.PEPModeAccepted {
+		t.Fatalf("Decide = %+v, %v; want pep_mode_accepted", d, err)
+	}
+	if _, present := body["pep_mode"]; present {
+		t.Errorf("pep_mode sent although empty: %v", body)
+	}
+	if _, err = c.Decide(context.Background(), socrate.DecideRequest{Action: "a", PEPMode: "enforce"}); err != nil || body["pep_mode"] != "enforce" {
+		t.Errorf("pep_mode not sent: %v, %v", body, err)
+	}
+	if _, err = c.Decide(context.Background(), socrate.DecideRequest{Action: "a", PEPMode: "strict"}); !errors.Is(err, socrate.ErrPolicyRequestRejected) {
+		t.Errorf("400 → %v, want ErrPolicyRequestRejected", err)
 	}
 }

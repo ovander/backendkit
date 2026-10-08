@@ -809,8 +809,10 @@ every server mode, a deny is `403 policy_denied`, an unmet obligation is `elevat
 `mfa_required`, and an unreachable Socrate is `503 policy_unavailable`, even before any decision
 has reported a mode. `New` refuses `MinimumMode: "enforce"` combined with
 `FailOpenWhenModeUnknown`. With `"shadow"`, a server in `off` is treated as `shadow`. Socrate
-evaluates its rules in every mode, so these are real decisions; while `POLICY_MODE=off` Socrate
-does not record them in its decision log (ovander/go-oauth2#323).
+evaluates its rules in every mode, so these are real decisions. With Socrate v1.13.0+, which
+advertises `pep_mode_accepted`, the enforcer also reports the floor as `pep_mode`, so Socrate
+records these decisions in its decision log even while `POLICY_MODE=off`; an older Socrate is
+never sent the field.
 
 `ContextFor` sends the request's peer address as `context.ip`: behind a proxy, resolve
 `RemoteAddr` with a trusted real-IP middleware first — a spoofable `X-Forwarded-For` must never
