@@ -97,6 +97,8 @@ type Middleware struct {
 	audiences       []string
 	audienceSet     bool
 	revocationCheck RevocationChecker
+	// writeErr writes rejections; nil uses the default JSON envelope.
+	writeErr apierror.ErrorWriter
 	// tenantClaim is the claim the tenant is read from when tenantClaimSet
 	// (WithTenantClaim); otherwise it is tenant_id, decoded into SocrateClaims.
 	// An empty tenantClaim with tenantClaimSet rejects every token.
@@ -194,6 +196,15 @@ func WithAudiences(expectedAudiences ...string) Option {
 		}
 		m.audiences, m.audienceSet = set, true
 	}
+}
+
+// WithErrorWriter sets how the middleware writes its 401 responses (missing
+// or invalid bearer, invalid or expired token, revoked token, invalid tenant
+// claim). Pass apierror.ProblemWriter for RFC 9457 application/problem+json.
+// Without it, or with nil, the default apierror JSON envelope is written,
+// byte-for-byte as before.
+func WithErrorWriter(write apierror.ErrorWriter) Option {
+	return func(m *Middleware) { m.writeErr = write }
 }
 
 // WithRevocationCheck enables a post-validation revocation check. The supplied
@@ -324,14 +335,14 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 		token, err := extractBearer(r)
 		if err != nil {
 			m.logger.WithError(err).Warn("missing bearer token")
-			apierror.Unauthorized("missing or invalid authorization header").WriteJSON(w)
+			m.writeError(w, r, apierror.Unauthorized("missing or invalid authorization header"))
 			return
 		}
 
 		claims, err := m.validateToken(token)
 		if err != nil {
 			m.logger.WithError(err).Warn("token validation failed")
-			apierror.Unauthorized("invalid or expired token").WriteJSON(w)
+			m.writeError(w, r, apierror.Unauthorized("invalid or expired token"))
 			return
 		}
 
@@ -345,7 +356,7 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 		if m.revocationCheck != nil {
 			if err := m.revocationCheck(ctx, claims); err != nil {
 				m.logger.WithError(err).Warn("token revoked")
-				apierror.Unauthorized("token revoked").WriteJSON(w)
+				m.writeError(w, r, apierror.Unauthorized("token revoked"))
 				return
 			}
 		}
@@ -355,7 +366,7 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 			tenantID, err := uuid.Parse(claims.TenantID)
 			if err != nil {
 				m.logger.WithError(err).Warn("invalid tenant_id in claims")
-				apierror.Unauthorized("invalid tenant_id").WriteJSON(w)
+				m.writeError(w, r, apierror.Unauthorized("invalid tenant_id"))
 				return
 			}
 			ctx = ctxutil.WithTenantID(ctx, tenantID)
@@ -428,6 +439,14 @@ func (m *Middleware) acceptedAudiences(tokenAud []string) []string {
 		out = append(out, a)
 	}
 	return out
+}
+
+func (m *Middleware) writeError(w http.ResponseWriter, r *http.Request, e *apierror.AppError) {
+	if m.writeErr != nil {
+		m.writeErr(w, r, e)
+		return
+	}
+	e.WriteJSON(w)
 }
 
 func extractBearer(r *http.Request) (string, error) {

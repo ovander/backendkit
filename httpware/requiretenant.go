@@ -30,12 +30,24 @@ import (
 // SecurityHeaders — and needs no constructor: rejections are logged through the
 // request-scoped logger from ctxutil.GetLogger.
 func RequireTenant(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if ctxutil.GetTenantID(r.Context()) == uuid.Nil {
-			ctxutil.GetLogger(r.Context()).Warn("request rejected: no tenant in context")
-			apierror.Unauthorized("tenant context required").WriteJSON(w)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	return RequireTenantWith(nil)(next)
+}
+
+// RequireTenantWith is RequireTenant writing its 401 with write, e.g.
+// apierror.ProblemWriter for RFC 9457 application/problem+json. A nil write
+// is RequireTenant: the default apierror JSON envelope.
+func RequireTenantWith(write apierror.ErrorWriter) func(http.Handler) http.Handler {
+	if write == nil {
+		write = apierror.JSONWriter
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if ctxutil.GetTenantID(r.Context()) == uuid.Nil {
+				ctxutil.GetLogger(r.Context()).Warn("request rejected: no tenant in context")
+				write(w, r, apierror.Unauthorized("tenant context required"))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }

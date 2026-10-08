@@ -3,10 +3,12 @@ package httpware_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
+	"github.com/ovander/backendkit/apierror"
 	"github.com/ovander/backendkit/ctxutil"
 	"github.com/ovander/backendkit/httpware"
 )
@@ -49,5 +51,32 @@ func TestRequireTenant_MissingTenant_Returns401(t *testing.T) {
 	}
 	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
 		t.Errorf("content-type = %q, want application/json (apierror envelope)", ct)
+	}
+}
+
+func TestRequireTenantWith_ProblemWriter(t *testing.T) {
+	h := httpware.RequireTenantWith(apierror.ProblemWriter)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("handler reached without a tenant")
+	}))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	if w.Code != 401 || w.Header().Get("Content-Type") != "application/problem+json" || !strings.Contains(w.Body.String(), `"detail":"tenant context required"`) {
+		t.Errorf("got %d %q %s", w.Code, w.Header().Get("Content-Type"), w.Body.String())
+	}
+}
+
+// RequireTenant's body is unchanged, and RequireTenantWith(nil) is RequireTenant.
+func TestRequireTenant_DefaultBodyUnchanged(t *testing.T) {
+	want := httptest.NewRecorder()
+	apierror.Unauthorized("tenant context required").WriteJSON(want)
+	for name, mw := range map[string]func(http.Handler) http.Handler{
+		"RequireTenant":          httpware.RequireTenant,
+		"RequireTenantWith(nil)": httpware.RequireTenantWith(nil),
+	} {
+		w := httptest.NewRecorder()
+		mw(http.NotFoundHandler()).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+		if w.Code != 401 || w.Body.String() != want.Body.String() {
+			t.Errorf("%s: %d %q, want %q", name, w.Code, w.Body.String(), want.Body.String())
+		}
 	}
 }
