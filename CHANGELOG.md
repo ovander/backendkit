@@ -18,6 +18,22 @@ All notable changes to backendkit are documented here. Format:
   `"enforce"` combined with `FailOpenWhenModeUnknown`. Empty or `"off"`, the default, follows
   Socrate exactly as before. The shadow would-deny log line gains `server_mode`.
 
+- **`httpware.NewKeyedRateLimiter`: rate limiting with no unlimited request** (#94). `RateLimiter`
+  keys on the tenant only and lets a request without one through, so service accounts without a
+  tenant were unlimited (Lakebridge wrote its own bucket). The new limiter counts each request
+  against its tenant (`t:`), else its subject (`s:`, e.g. a service account `app:7`), else its
+  client address (`a:`) in a separate, smaller anonymous bucket (a tenth of the authenticated one
+  by default), so an unauthenticated flood never shares a bucket with real traffic. The prefixes
+  keep the tiers apart.
+  - IPv6 addresses are grouped by /64.
+  - The client address comes from a `ClientIP` function (pass a trusted-proxy-aware one behind a
+    proxy), else the peer address.
+  - Address buckets are bounded by `MaxAnonymousKeys` (default 10,000): a new address beyond it is
+    refused until idle buckets expire; tenant and subject buckets never are.
+  - `Retry-After` is computed from the bucket instead of a fixed `1`.
+
+  `RateLimiter` is unchanged.
+
 - **RFC 9457 problem details, and a hook to use them in the rejecting middleware** (#99).
   `(*apierror.AppError).WriteProblem` writes `application/problem+json`: `type: "about:blank"`,
   `title` the status text, `status`, `detail` the message, and `code`, `key` and `details` as
