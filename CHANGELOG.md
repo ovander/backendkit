@@ -6,6 +6,14 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+## [1.23.0] - 2026-10-08
+
+Minor release on the **v1** line. The minimum Go is back to **1.26.0**, so importers that cannot
+move to Go 1.27.1 yet can upgrade again. `httpware.RequestID` keeps only well-formed incoming ids
+(new helpers `ValidRequestID`, `MaxRequestIDLength`). `socrate.Client` forwards the request id as
+`X-Correlation-ID` on every call, not only `Decide`. No changed signature and no changed default;
+with Socrate v1.12.2+, Socrate applies the same id rule on its side.
+
 ### Changed
 - **The minimum Go is back to 1.26.0** (`go 1.26.0`, with `toolchain go1.27.1`). v1.20.0 had raised
   the `go` line to 1.27.1, which forced every importer onto Go 1.27.1. A consumer that could not
@@ -662,7 +670,8 @@ are rejected. Confirm your Socrate server populates `aud` before enabling it in
 production. Making audience validation required-by-default is deferred to a future
 major (v2.0) and tracked separately.
 
-[Unreleased]: https://github.com/ovander/backendkit/compare/v1.22.0...HEAD
+[Unreleased]: https://github.com/ovander/backendkit/compare/v1.23.0...HEAD
+[1.23.0]: https://github.com/ovander/backendkit/compare/v1.22.0...v1.23.0
 [1.22.0]: https://github.com/ovander/backendkit/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/ovander/backendkit/compare/v1.20.0...v1.21.0
 [1.20.0]: https://github.com/ovander/backendkit/compare/v1.19.0...v1.20.0
