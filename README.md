@@ -416,7 +416,7 @@ with any `net/http`-based router.
 
 | Middleware | Constructor |
 |-----------|-------------|
-| Request ID | `httpware.RequestID` |
+| Request ID | `httpware.RequestID` — keeps a valid incoming `X-Request-ID` (≤ 128 chars of `A-Za-z0-9._:-`, see `ValidRequestID`), otherwise generates a UUID |
 | Structured logger | `httpware.Logger(logger)` — takes a `*logrus.Logger` |
 | Security headers | `httpware.SecurityHeaders` |
 | Body size limit | `httpware.BodyLimit(maxBytes)` |
