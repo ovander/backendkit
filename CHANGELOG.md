@@ -6,6 +6,23 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Added
+- **`bff.PendingLoginStore`: pending logins that survive across instances** (#98). Between `/login`
+  and the callback a BFF keeps the PKCE verifier, the `LoginBinding` nonce and the return path,
+  keyed by the OAuth state. Each application kept them in its own in-memory map (oauth2-admin), or
+  its own table (oauth2-monitoring, where the nonce was not stored and every sign-in failed), so
+  behind several instances a login started on one could not finish on another.
+  - The interface is `Put` / `Take` / `Sweep` with a context. `Take` returns and removes the
+    entry in one step, and refuses an unknown, expired or unreadable state.
+  - `NewMemoryPendingLoginStore(ttl, max)` is bounded (`ErrPendingLoginsFull`), because `/login`
+    needs no session.
+  - `NewPostgresPendingLoginStore(ctx, db, key, ttl, …)` encrypts each row with AES-256-GCM bound
+    to its state, takes with one `DELETE … RETURNING`, and supports
+    `WithPendingLoginManagedSchema()`, `WithPendingLoginTable()` and
+    `WithPendingLoginErrorHandler()`.
+
+  The session stores are unchanged.
+
 ## [1.24.0] - 2026-10-08
 
 Minor release on the **v1** line: additive API only, from the Lakebridge review. `pep.Config.MinimumMode`

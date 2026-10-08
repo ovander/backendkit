@@ -751,6 +751,17 @@ columns and that the role holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on it,
 otherwise. The `CREATE TABLE` and `CREATE INDEX` your migration must run are in its doc comment;
 the table name (`WithPostgresTable`) is unqualified, so put the schema in the role's `search_path`.
 
+**Pending logins across instances.** Between `/login` and the callback, the BFF keeps the PKCE
+verifier, the `LoginBinding` nonce and the return path under the OAuth state. A
+`PendingLoginStore` holds them: `Put` at `/login`, `Take` at the callback (returns and removes in
+one step, so a state is accepted once; unknown, expired or unreadable ⇒ refused). Use
+`NewMemoryPendingLoginStore(ttl, max)` for one instance; it is bounded, because `/login` needs no
+session. Use `NewPostgresPendingLoginStore(ctx, db, key, ttl)` behind several instances, so a
+login started on one completes on another. Its rows are encrypted under the key (the session
+store's may be reused) and bound to their state, and `Take` is one `DELETE … RETURNING`. It
+supports `WithPendingLoginManagedSchema()` like the session store. An application may implement
+the interface itself, for example by sealing the verifier into an encrypted value.
+
 Full API: [pkg.go.dev/…/bff](https://pkg.go.dev/github.com/ovander/backendkit/bff).
 
 ---
