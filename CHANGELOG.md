@@ -7,6 +7,17 @@ All notable changes to backendkit are documented here. Format:
 ## [Unreleased]
 
 ### Added
+- **`pep.Config.MinimumMode`, a floor under the mode Socrate reports** (#97). Socrate's
+  `POLICY_MODE` is server-wide, so an application that must enforce its rules while the server is
+  still `off` or `shadow` for others had to reimplement the mode logic (Lakebridge's
+  `internal/guard`). The effective mode is now the stricter of the server's and `MinimumMode`
+  (`off` < `shadow` < `enforce`). With `"enforce"`, in every server mode, a deny is
+  `policy_denied`, an unmet obligation is `elevation_required` / `mfa_required`, and an
+  unreachable decision point is `policy_unavailable` (503), even before any decision has reported a
+  mode. With `"shadow"`, `off` is treated as `shadow`. `New` refuses an unknown value and
+  `"enforce"` combined with `FailOpenWhenModeUnknown`. Empty or `"off"`, the default, follows
+  Socrate exactly as before. The shadow would-deny log line gains `server_mode`.
+
 - **`httpware.NewKeyedRateLimiter`: rate limiting with no unlimited request** (#94). `RateLimiter`
   keys on the tenant only and lets a request without one through, so service accounts without a
   tenant were unlimited (Lakebridge wrote its own bucket). The new limiter counts each request
