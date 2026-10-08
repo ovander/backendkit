@@ -134,7 +134,7 @@ to Socrate (`bff`, `pep`) and `ailang` for `aigateway`.
 ## Installation
 
 ```bash
-go get github.com/ovander/backendkit@v1.22.0
+go get github.com/ovander/backendkit@v1.23.0
 ```
 
 ```go
@@ -143,7 +143,7 @@ module github.com/your-org/my-service
 
 go 1.26.0
 
-require github.com/ovander/backendkit v1.22.0
+require github.com/ovander/backendkit v1.23.0
 ```
 
 ---
