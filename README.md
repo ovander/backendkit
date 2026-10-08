@@ -75,7 +75,7 @@ backendkit puts that foundation in one versioned dependency:
 |---------|---------|
 | [`apierror`](#apierror) | Structured HTTP error types (`AppError`, constructor functions) |
 | [`ctxutil`](#ctxutil) | Typed context keys for Socrate claims (tenant, user, role, plan, logger, request-id) |
-| [`httpware`](#httpware) | Chi-compatible middlewares: RequestID, Logger, SecurityHeaders, BodyLimit, Recover, Timeout, RateLimiter, RequireTenant, RBAC, Metrics (Prometheus RED) |
+| [`httpware`](#httpware) | Chi-compatible middlewares: RequestID, Logger, SecurityHeaders, BodyLimit, Recover, Timeout, RateLimiter, KeyedRateLimiter, RequireTenant, RBAC, Metrics (Prometheus RED) |
 | [`gormlogger`](#gormlogger) | GORM → logrus bridge with slow-query detection |
 | [`jwtauth`](#jwtauth) | JWT RS256 validation middleware with JWKS cache and stale-key fallback |
 | [`bff`](#bff) | Backend-for-Frontend runtime: server-side sessions, `__Host-` cookies, CSRF, PKCE, login binding and a fail-closed session→bearer proxy with coalesced token refresh |
@@ -422,7 +422,8 @@ with any `net/http`-based router.
 | Body size limit | `httpware.BodyLimit(maxBytes)` |
 | Panic recovery | `httpware.Recover(entry)` — takes a `*logrus.Entry` |
 | Per-route timeout | `httpware.Timeout(d)` |
-| Per-tenant rate limit | `httpware.NewRateLimiter(rps, burst)` — mount `rl.Handler`, call `rl.Stop()` on shutdown |
+| Per-tenant rate limit | `httpware.NewRateLimiter(rps, burst)` — mount `rl.Handler`, call `rl.Stop()` on shutdown; requests without a tenant pass unlimited |
+| Keyed rate limit (no request unlimited) | `httpware.NewKeyedRateLimiter(cfg)` — tenant, else subject, else client address in a smaller anonymous bucket (IPv6 by /64, bounded by `MaxAnonymousKeys`); real `Retry-After`. Pass a trusted-proxy-aware `ClientIP` behind a proxy |
 | Require a tenant | `httpware.RequireTenant` — 401 when no tenant is in context |
 | Role-based access | `httpware.NewRBAC(roleMap, entry)` |
 | Prometheus RED metrics | `httpware.Metrics(service)` — mount first; `httpware.MetricsHandler()` serves the exposition |
