@@ -150,8 +150,15 @@ func NewPostgresStore(ctx context.Context, db *sql.DB, key []byte, idle, absolut
 // the columns the store uses and that the role may read and write it, so a
 // missing grant fails at start-up rather than at the first sign-in.
 func (p *PostgresStore) checkManagedTable(ctx context.Context) error {
-	// The table name is a checked identifier; LIMIT 0 reads no row.
-	rows, err := p.db.QueryContext(ctx, `SELECT id, data, created_at, last_seen, deleted_at FROM `+p.table+` LIMIT 0`)
+	return checkTable(ctx, p.db, p.table, "id, data, created_at, last_seen, deleted_at", "SELECT", "INSERT", "UPDATE", "DELETE")
+}
+
+// checkTable verifies, without DDL, that table has columns (a comma-separated
+// list) and that the role holds each of privileges on it. table is a checked
+// identifier.
+func checkTable(ctx context.Context, db *sql.DB, table, columns string, privileges ...string) error {
+	// LIMIT 0 reads no row.
+	rows, err := db.QueryContext(ctx, `SELECT `+columns+` FROM `+table+` LIMIT 0`)
 	if err != nil {
 		return err
 	}
@@ -160,9 +167,9 @@ func (p *PostgresStore) checkManagedTable(ctx context.Context) error {
 	}
 	// One call per privilege: given a list, has_table_privilege is true when
 	// any of them is held.
-	for _, priv := range []string{"SELECT", "INSERT", "UPDATE", "DELETE"} {
+	for _, priv := range privileges {
 		var ok bool
-		if err := p.db.QueryRowContext(ctx, `SELECT has_table_privilege($1, $2)`, p.table, priv).Scan(&ok); err != nil {
+		if err := db.QueryRowContext(ctx, `SELECT has_table_privilege($1, $2)`, table, priv).Scan(&ok); err != nil {
 			return err
 		}
 		if !ok {
