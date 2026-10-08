@@ -118,6 +118,7 @@ func (c *Client) postForm(ctx context.Context, fullURL string, data url.Values) 
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	ApplyClientAttribution(req)
+	setCorrelationID(req)
 	return c.httpClient.Do(req)
 }
 
@@ -252,6 +253,7 @@ func (c *Client) Logout(ctx context.Context) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+jwt)
 	req.Header.Set("Content-Type", "application/json")
+	setCorrelationID(req)
 	ApplyClientAttribution(req)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -281,5 +283,6 @@ func (c *Client) doHTTPNoAuth(ctx context.Context, method, fullURL string, body 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	ApplyClientAttribution(req)
+	setCorrelationID(req)
 	return c.httpClient.Do(req)
 }

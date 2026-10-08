@@ -515,7 +515,9 @@ OAuth and admin ports, the `client_credentials` service-account flow, magic link
 decision point) and will not work against Keycloak, Auth0 or other providers.
 
 The client uses a dual-auth strategy: user-scoped calls forward the caller's JWT; service-account
-calls acquire a `client_credentials` token automatically and cache it until near-expiry.
+calls acquire a `client_credentials` token automatically and cache it until near-expiry. Every call
+forwards the request id (`ctxutil.GetRequestID`, set by `httpware.RequestID`) as
+`X-Correlation-ID`, the header Socrate logs, so one request can be followed across both services.
 `ServiceToken(ctx)` returns that token and its expiry, for calling another service that accepts
 Socrate tokens as the application itself. When that service refuses the token with 401 before its
 expiry (a token revoked at Socrate), `InvalidateServiceToken()` drops the cached token so the next
