@@ -7,6 +7,17 @@ All notable changes to backendkit are documented here. Format:
 ## [Unreleased]
 
 ### Added
+- **`pep.Config.MinimumMode`, a floor under the mode Socrate reports** (#97). Socrate's
+  `POLICY_MODE` is server-wide, so an application that must enforce its rules while the server is
+  still `off` or `shadow` for others had to reimplement the mode logic (Lakebridge's
+  `internal/guard`). The effective mode is now the stricter of the server's and `MinimumMode`
+  (`off` < `shadow` < `enforce`). With `"enforce"`, in every server mode, a deny is
+  `policy_denied`, an unmet obligation is `elevation_required` / `mfa_required`, and an
+  unreachable decision point is `policy_unavailable` (503), even before any decision has reported a
+  mode. With `"shadow"`, `off` is treated as `shadow`. `New` refuses an unknown value and
+  `"enforce"` combined with `FailOpenWhenModeUnknown`. Empty or `"off"`, the default, follows
+  Socrate exactly as before. The shadow would-deny log line gains `server_mode`.
+
 - **RFC 9457 problem details, and a hook to use them in the rejecting middleware** (#99).
   `(*apierror.AppError).WriteProblem` writes `application/problem+json`: `type: "about:blank"`,
   `title` the status text, `status`, `detail` the message, and `code`, `key` and `details` as
