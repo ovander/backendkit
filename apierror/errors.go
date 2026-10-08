@@ -206,3 +206,53 @@ func (e *AppError) WriteJSON(w http.ResponseWriter) {
 	w.WriteHeader(e.StatusCode)
 	json.NewEncoder(w).Encode(ErrorResponse{Error: out}) //nolint:errcheck
 }
+
+// ErrorWriter writes an *AppError as an HTTP response. Middleware that rejects
+// requests (jwtauth, httpware.RequireTenant) accepts one, so an application
+// chooses the shape of every error body it returns. JSONWriter (the default
+// envelope) and ProblemWriter (RFC 9457) are ErrorWriters.
+type ErrorWriter func(w http.ResponseWriter, r *http.Request, e *AppError)
+
+// JSONWriter is the ErrorWriter for the default envelope: e.WriteJSON(w).
+func JSONWriter(w http.ResponseWriter, _ *http.Request, e *AppError) { e.WriteJSON(w) }
+
+// ProblemWriter is the ErrorWriter for RFC 9457 problem details: e.WriteProblem(w).
+func ProblemWriter(w http.ResponseWriter, _ *http.Request, e *AppError) { e.WriteProblem(w) }
+
+// Problem is an RFC 9457 problem details object, as WriteProblem writes it.
+// Code, Key and Details are extension members carrying the AppError fields.
+type Problem struct {
+	Type    string `json:"type"`
+	Title   string `json:"title"`
+	Status  int    `json:"status"`
+	Detail  string `json:"detail,omitempty"`
+	Code    string `json:"code"`
+	Key     string `json:"key,omitempty"`
+	Details any    `json:"details,omitempty"`
+}
+
+// WriteProblem writes the error as RFC 9457 application/problem+json:
+// "type" is "about:blank" and "title" the HTTP status text, as the RFC
+// specifies for a problem with no type of its own; "detail" is the Message;
+// "code", "key" and "details" carry the remaining fields as extension members.
+// As with WriteJSON, a 5xx response omits the dev-facing Message and Details.
+func (e *AppError) WriteProblem(w http.ResponseWriter) {
+	p := Problem{
+		Type:    "about:blank",
+		Title:   http.StatusText(e.StatusCode),
+		Status:  e.StatusCode,
+		Detail:  e.Message,
+		Code:    e.Code,
+		Key:     e.Key,
+		Details: e.Details,
+	}
+	if p.Title == "" {
+		p.Title = "Error"
+	}
+	if e.StatusCode >= http.StatusInternalServerError {
+		p.Detail, p.Details = "", nil
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(e.StatusCode)
+	json.NewEncoder(w).Encode(p) //nolint:errcheck // the status line is already sent; nothing to do on a write error
+}

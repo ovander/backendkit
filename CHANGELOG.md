@@ -34,6 +34,15 @@ All notable changes to backendkit are documented here. Format:
 
   `RateLimiter` is unchanged.
 
+- **RFC 9457 problem details, and a hook to use them in the rejecting middleware** (#99).
+  `(*apierror.AppError).WriteProblem` writes `application/problem+json`: `type: "about:blank"`,
+  `title` the status text, `status`, `detail` the message, and `code`, `key` and `details` as
+  extension members. 5xx is redacted as with `WriteJSON`. `apierror.ErrorWriter` is the shape of a
+  writer, with `JSONWriter` (the default envelope) and `ProblemWriter`.
+  `jwtauth.WithErrorWriter(w)` writes its four 401s through it, and `httpware.RequireTenantWith(w)`
+  is `RequireTenant` with it, so an API answering in problem+json (Lakebridge) no longer wraps
+  either to rewrite their bodies. Without these options the bodies are byte-for-byte unchanged.
+
 ## [1.23.0] - 2026-10-08
 
 Minor release on the **v1** line. The minimum Go is back to **1.26.0**, so importers that cannot

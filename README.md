@@ -347,6 +347,14 @@ apierror.Internal("database error").WriteJSON(w)
 > server-side via `Error()` for logging, and 4xx responses are unchanged. Clients should key on
 > `error.code` for 5xx.
 
+**RFC 9457 problem details.** `WriteProblem` writes the same error as `application/problem+json`
+(`type: about:blank`, `title` the status text, `status`, `detail` the message, plus `code`, `key`
+and `details` as extension members; 5xx redacted the same way). The middleware that rejects
+requests takes an `apierror.ErrorWriter`, so an API can answer in one shape throughout:
+`jwtauth.WithErrorWriter(apierror.ProblemWriter)` and
+`httpware.RequireTenantWith(apierror.ProblemWriter)`. Without them, the default envelope is
+written as before.
+
 Available constructors: `NotFound`, `BadRequest`, `Unauthorized`, `Forbidden`, `Conflict`,
 `ValidationError`, `TooManyRequests`, `Internal`, `BadGateway`, `ServiceUnavailable`.
 
