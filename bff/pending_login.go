@@ -142,6 +142,7 @@ type PostgresPendingLoginStore struct {
 	now     func() time.Time
 	onError func(op string, err error)
 	managed bool
+	auto    bool
 }
 
 // PendingLoginStoreOption configures a PostgresPendingLoginStore.
@@ -172,6 +173,14 @@ func WithPendingLoginErrorHandler(f func(op string, err error)) PendingLoginStor
 //	);
 func WithPendingLoginManagedSchema() PendingLoginStoreOption {
 	return func(s *PostgresPendingLoginStore) { s.managed = true }
+}
+
+// WithPendingLoginAutoSchema tells NewPostgresPendingLoginStore to create its
+// table itself, as WithPostgresAutoSchema does for the session store; without
+// either schema option it does the same and logs a start-up warning. It
+// cannot be combined with WithPendingLoginManagedSchema.
+func WithPendingLoginAutoSchema() PendingLoginStoreOption {
+	return func(s *PostgresPendingLoginStore) { s.auto = true }
 }
 
 // NewPostgresPendingLoginStore checks the connection, creates the table if it
@@ -205,6 +214,14 @@ func NewPostgresPendingLoginStore(ctx context.Context, db *sql.DB, key []byte, t
 	}
 	if !tableNamePattern.MatchString(s.table) {
 		return nil, fmt.Errorf("bff: pending login store: invalid table name %q", s.table)
+	}
+	if s.managed && s.auto {
+		return nil, errors.New("bff: pending login store: WithPendingLoginManagedSchema and WithPendingLoginAutoSchema contradict each other")
+	}
+	if !s.managed && !s.auto {
+		log.Printf("bff: pending login store: neither WithPendingLoginManagedSchema nor WithPendingLoginAutoSchema given; "+
+			"creating table %s at start-up. Pass WithPendingLoginAutoSchema to keep this, or create the table in your "+
+			"migrations and pass WithPendingLoginManagedSchema (see its doc comment)", s.table)
 	}
 	if err := db.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("bff: pending login store: %w", err)

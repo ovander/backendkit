@@ -732,7 +732,9 @@ open with the driver of your choice (backendkit imports none):
 ```go
 db, _ := sql.Open("pgx", os.Getenv("BFF_SESSION_DSN")) // import _ "github.com/jackc/pgx/v5/stdlib"
 key, _ := base64.StdEncoding.DecodeString(os.Getenv("BFF_SESSION_KEY")) // 32 bytes: openssl rand -base64 32
-store, err := bff.NewPostgresStore(ctx, db, key, 30*time.Minute, 8*time.Hour) // creates its table
+// The table comes from your migrations (see WithPostgresManagedSchema); the role needs only
+// SELECT, INSERT, UPDATE and DELETE on it. For a quick start, WithPostgresAutoSchema() creates it.
+store, err := bff.NewPostgresStore(ctx, db, key, 30*time.Minute, 8*time.Hour, bff.WithPostgresManagedSchema())
 ```
 
 The session data, tokens included, is encrypted with AES-256-GCM under that key, bound to the
@@ -743,13 +745,17 @@ handler (`WithPostgresErrorHandler`; default: the standard logger). For another 
 implement `SessionStore` (`Get`, `Put`, `Delete`, `Sweep`) with `Session.Snapshot` /
 `NewSessionFromSnapshot`. A `Gateway` must be used by pointer and never copied.
 
-**Least-privilege database role.** By default `NewPostgresStore` runs `CREATE TABLE IF NOT EXISTS`
-and `CREATE INDEX IF NOT EXISTS`, which PostgreSQL refuses to a role without `CREATE` on the schema
-and ownership of the table, even when both already exist. When your migrations own the table, pass
-`bff.WithPostgresManagedSchema()`: the store runs no DDL, checks at start-up that the table has its
-columns and that the role holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on it, and fails
-otherwise. The `CREATE TABLE` and `CREATE INDEX` your migration must run are in its doc comment;
-the table name (`WithPostgresTable`) is unqualified, so put the schema in the role's `search_path`.
+**Schema: managed (recommended) or auto.** With `bff.WithPostgresManagedSchema()` your migrations
+own the table: the store runs no DDL, and checks at start-up that the table has its columns and
+that the role holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on it, failing otherwise. The
+`CREATE TABLE` and `CREATE INDEX` your migration must run are in its doc comment. The table name
+(`WithPostgresTable`) is unqualified, so put the schema in the role's `search_path`. With
+`bff.WithPostgresAutoSchema()` the store runs `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT
+EXISTS` itself, which PostgreSQL refuses to a role without `CREATE` on the schema and ownership of
+the table, even when both already exist. With neither option the store behaves as auto, as it
+always has, and logs a start-up warning asking you to choose; managed may become the default in a
+future major version. The pending-login store has the same pair,
+`WithPendingLoginManagedSchema()` and `WithPendingLoginAutoSchema()`.
 
 **Pending logins across instances.** Between `/login` and the callback, the BFF keeps the PKCE
 verifier, the `LoginBinding` nonce and the return path under the OAuth state. A

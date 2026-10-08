@@ -37,7 +37,7 @@ func pgStore(t *testing.T, idle, absolute time.Duration) (*PostgresStore, *sql.D
 	t.Cleanup(func() { _ = db.Close() })
 	table := fmt.Sprintf("bff_test_%d", time.Now().UnixNano())
 	s, err := NewPostgresStore(context.Background(), db, testKey, idle, absolute,
-		WithPostgresTable(table), WithPostgresErrorHandler(func(op string, err error) { t.Errorf("%s: %v", op, err) }))
+		WithPostgresTable(table), WithPostgresAutoSchema(), WithPostgresErrorHandler(func(op string, err error) { t.Errorf("%s: %v", op, err) }))
 	if err != nil {
 		t.Fatal(err)
 	}
