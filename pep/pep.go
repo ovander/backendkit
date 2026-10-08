@@ -9,7 +9,10 @@
 //
 // The mode is set once, centrally, by Socrate's POLICY_MODE, so an operator
 // rolls a policy out across every application at once and no application
-// needs a redeploy to go from shadow to enforce.
+// needs a redeploy to go from shadow to enforce. An application that must be
+// stricter than the server (enforce its rules while POLICY_MODE is still off
+// or shadow for the others) sets Config.MinimumMode: the effective mode is
+// the stricter of the two.
 //
 // Two ways to use it:
 //
@@ -78,6 +81,18 @@ type Config struct {
 	// Once one decision has arrived the last known mode is used instead, so
 	// an outage during shadow never takes the application down.
 	FailOpenWhenModeUnknown bool
+	// MinimumMode is a floor under the mode Socrate reports: the effective
+	// mode is the stricter of the two (off < shadow < enforce). Empty or
+	// "off", the default, follows Socrate exactly. With "enforce", in every
+	// server mode: a rule's deny is a deny (403), an unmet obligation is a
+	// deny (elevation_required / mfa_required), and an unreachable decision
+	// point is a *Denial with policy_unavailable (503) for the caller to map,
+	// even before any decision has reported a mode. With "shadow", a server in
+	// off mode is treated as shadow (would-deny lines are logged). Socrate
+	// evaluates its rules in every mode, so floor-enforced decisions are real
+	// decisions. MinimumMode "enforce" together with FailOpenWhenModeUnknown is
+	// contradictory and New refuses it; an unknown value is refused too.
+	MinimumMode string
 	// Logger receives would-deny lines in shadow mode and outage warnings.
 	Logger *logrus.Entry
 	// OnDecision, when set, is called once per check — for metrics. err is
@@ -96,6 +111,15 @@ type Enforcer struct {
 func New(cfg Config) (*Enforcer, error) {
 	if cfg.Decider == nil {
 		return nil, errors.New("pep: Decider is required")
+	}
+	if cfg.MinimumMode == "" {
+		cfg.MinimumMode = socrate.PolicyModeOff
+	}
+	if _, ok := modeRank[cfg.MinimumMode]; !ok {
+		return nil, errors.New("pep: MinimumMode must be off, shadow or enforce")
+	}
+	if cfg.MinimumMode == socrate.PolicyModeEnforce && cfg.FailOpenWhenModeUnknown {
+		return nil, errors.New("pep: MinimumMode enforce and FailOpenWhenModeUnknown contradict each other")
 	}
 	if cfg.FreshAuthMaxAge <= 0 {
 		cfg.FreshAuthMaxAge = DefaultFreshAuthMaxAge
@@ -154,17 +178,19 @@ func (e *Enforcer) check(ctx context.Context, req socrate.DecideRequest) error {
 	}
 	allowed := d.Allow && unmet == ""
 
+	mode := e.effectiveMode(d.Mode)
 	switch {
-	case allowed || d.Mode == socrate.PolicyModeOff:
+	case allowed || mode == socrate.PolicyModeOff:
 		e.report(ctx, req.Action, d, false, nil)
 		return nil
-	case d.Mode == socrate.PolicyModeShadow:
+	case mode == socrate.PolicyModeShadow:
 		e.log(ctx).WithFields(logrus.Fields{
 			"action":         req.Action,
 			"rule":           d.Rule,
 			"reason":         d.Reason,
 			"unmet":          unmet,
 			"policy_version": d.PolicyVersion,
+			"server_mode":    d.Mode,
 		}).Warn("pep: policy would deny (shadow mode)")
 		e.report(ctx, req.Action, d, false, nil)
 		return nil
@@ -194,6 +220,9 @@ func (e *Enforcer) unavailable(ctx context.Context, action string, d *socrate.De
 		mode = m
 	}
 
+	if mode != "" || e.cfg.MinimumMode == socrate.PolicyModeEnforce {
+		mode = e.effectiveMode(mode)
+	}
 	entry := e.log(ctx).WithFields(logrus.Fields{"action": action, "mode": mode, "error": err.Error()})
 	switch mode {
 	case socrate.PolicyModeOff, socrate.PolicyModeShadow:
@@ -209,6 +238,27 @@ func (e *Enforcer) unavailable(ctx context.Context, action string, d *socrate.De
 		entry.Error("pep: policy decision unavailable in enforce mode; refusing")
 	}
 	return &Denial{Code: CodeUnavailable, Status: http.StatusServiceUnavailable, Decision: d}
+}
+
+// modeRank orders the modes this version knows, from the most permissive.
+var modeRank = map[string]int{
+	socrate.PolicyModeOff:     0,
+	socrate.PolicyModeShadow:  1,
+	socrate.PolicyModeEnforce: 2,
+}
+
+// effectiveMode is the stricter of the server's mode and MinimumMode. A server
+// mode this version does not know is returned as is (check treats it as
+// enforce); an empty one (unknown) counts as off, so only the floor applies.
+func (e *Enforcer) effectiveMode(server string) string {
+	r, known := modeRank[server]
+	if !known && server != "" {
+		return server
+	}
+	if modeRank[e.cfg.MinimumMode] > r {
+		return e.cfg.MinimumMode
+	}
+	return server
 }
 
 // unmetObligation returns the first obligation the user's token does not

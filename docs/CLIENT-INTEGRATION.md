@@ -1214,9 +1214,13 @@ Your frontend sees these error codes, in the `{"error": "<code>"}` shape:
 | 403 | `mfa_required` | the policy requires multi-factor authentication |
 | 503 | `policy_unavailable` | Socrate could not be asked and the mode is `enforce`, or not yet known |
 
+The mode is Socrate's server-wide `POLICY_MODE`. An application that must enforce regardless sets
+`pep.Config{MinimumMode: "enforce"}`: the stricter of the two modes applies, so the codes above
+are returned in every server mode.
+
 The README's [`pep` reference](../README.md#pep) details obligations, the
-behaviour when Socrate is unreachable (`FailOpenWhenModeUnknown`), `CheckAsApp`
-for background jobs and the `OnDecision` metrics hook.
+behaviour when Socrate is unreachable (`FailOpenWhenModeUnknown`), the `MinimumMode` floor,
+`CheckAsApp` for background jobs and the `OnDecision` metrics hook.
 
 ---
 

@@ -6,6 +6,18 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Added
+- **`pep.Config.MinimumMode`, a floor under the mode Socrate reports** (#97). Socrate's
+  `POLICY_MODE` is server-wide, so an application that must enforce its rules while the server is
+  still `off` or `shadow` for others had to reimplement the mode logic (Lakebridge's
+  `internal/guard`). The effective mode is now the stricter of the server's and `MinimumMode`
+  (`off` < `shadow` < `enforce`). With `"enforce"`, in every server mode, a deny is
+  `policy_denied`, an unmet obligation is `elevation_required` / `mfa_required`, and an
+  unreachable decision point is `policy_unavailable` (503), even before any decision has reported a
+  mode. With `"shadow"`, `off` is treated as `shadow`. `New` refuses an unknown value and
+  `"enforce"` combined with `FailOpenWhenModeUnknown`. Empty or `"off"`, the default, follows
+  Socrate exactly as before. The shadow would-deny log line gains `server_mode`.
+
 ## [1.23.0] - 2026-10-08
 
 Minor release on the **v1** line. The minimum Go is back to **1.26.0**, so importers that cannot
