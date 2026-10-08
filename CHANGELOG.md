@@ -6,6 +6,16 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+## [1.24.0] - 2026-10-08
+
+Minor release on the **v1** line: additive API only, from the Lakebridge review. `pep.Config.MinimumMode`
+enforces a floor under Socrate's server-wide mode and, with Socrate v1.13.0+, reports it to the
+decision log. `httpware.NewKeyedRateLimiter` leaves no request unlimited (tenant, else subject,
+else client address in a smaller anonymous bucket). `apierror.WriteProblem` adds RFC 9457 problem
+details, used by `jwtauth.WithErrorWriter` and `httpware.RequireTenantWith`. No changed signature
+and no changed default; a 400 from `socrate.Client.Decide` now also matches
+`socrate.ErrPolicyRequestRejected`.
+
 ### Added
 - **`pep.Config.MinimumMode`, a floor under the mode Socrate reports** (#97). Socrate's
   `POLICY_MODE` is server-wide, so an application that must enforce its rules while the server is
@@ -715,7 +725,8 @@ are rejected. Confirm your Socrate server populates `aud` before enabling it in
 production. Making audience validation required-by-default is deferred to a future
 major (v2.0) and tracked separately.
 
-[Unreleased]: https://github.com/ovander/backendkit/compare/v1.23.0...HEAD
+[Unreleased]: https://github.com/ovander/backendkit/compare/v1.24.0...HEAD
+[1.24.0]: https://github.com/ovander/backendkit/compare/v1.23.0...v1.24.0
 [1.23.0]: https://github.com/ovander/backendkit/compare/v1.22.0...v1.23.0
 [1.22.0]: https://github.com/ovander/backendkit/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/ovander/backendkit/compare/v1.20.0...v1.21.0
