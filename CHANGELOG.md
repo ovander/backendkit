@@ -42,6 +42,14 @@ All notable changes to backendkit are documented here. Format:
   `jwtauth.WithErrorWriter(w)` writes its four 401s through it, and `httpware.RequireTenantWith(w)`
   is `RequireTenant` with it, so an API answering in problem+json (Lakebridge) no longer wraps
   either to rewrite their bodies. Without these options the bodies are byte-for-byte unchanged.
+- **`pep` reports `MinimumMode` to Socrate's decision log.** Once Socrate advertises
+  `pep_mode_accepted` (go-oauth2 v1.13.0+), an enforcer with `MinimumMode` above `off` sends it as
+  `pep_mode`, so decisions it enforces while `POLICY_MODE=off` appear on the monitoring console's
+  Policy Decisions page. An older Socrate is never sent the field. If a Socrate that advertised it
+  rejects it (a downgrade), the request is asked again without it and the flag is dropped, so
+  reporting can never cost a decision. New: `socrate.DecideRequest.PEPMode`,
+  `socrate.Decision.PEPModeAccepted`, and `socrate.ErrPolicyRequestRejected`, which `Decide` now
+  wraps for a 400.
 
 ## [1.23.0] - 2026-10-08
 
