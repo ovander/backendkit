@@ -6,6 +6,25 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Added
+- **`jwtauth`: read and require the token's scopes** (#116). A service could only check a scope
+  by decoding the token a second time.
+  - `SocrateClaims.Scopes()` merges the `scope` claim (space-separated string, RFC 9068 §2.2.3,
+    what Socrate emits) and `scp` (JSON array or single string): every value split on spaces,
+    empty entries dropped, duplicates kept once, in the token's order. They are exposed as the
+    new fields `SocrateClaims.Scope` and `SocrateClaims.Scp` (`jwt.ClaimStrings`); a `scope` or
+    `scp` claim of another JSON type now makes the token invalid (401), as a malformed `aud` does.
+  - `ctxutil.WithScopes` / `ctxutil.GetScopes`, set by `Handler` (nil when absent; copied).
+  - `jwtauth.RequireScopes(...)`: the token must carry every listed scope, else **403**
+    `forbidden` through the configured `ErrorWriter`, with
+    `WWW-Authenticate: Bearer error="insufficient_scope", scope="…"` (RFC 6750 §3.1). No
+    non-empty scope, or one that is not an RFC 6749 §3.3 scope-token, rejects every token and
+    `New` logs an error. The last option wins.
+  - `(*Middleware).ScopeGuard(...)`: the same check for one route group, mounted after `Handler`,
+    so one middleware serves groups with different scopes; 401 when `Handler` did not run.
+
+  Socrate issues application-defined scopes only from a release with ovander/go-oauth2#336.
+
 ## [1.25.0] - 2026-10-10
 
 Minor release on the **v1** line: additive API only. `bff.PendingLoginStore` keeps pending logins

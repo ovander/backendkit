@@ -408,6 +408,7 @@ ver      := ctxutil.GetTokenVersion(ctx)        // int — 0 when absent
 authTime := ctxutil.GetAuthTime(ctx)            // int64 Unix seconds — 0 when absent
 amr      := ctxutil.GetAMR(ctx)                 // []string, e.g. ["pwd", "mfa"] — nil when absent
 aud      := ctxutil.GetAudiences(ctx)           // []string — the audiences the token was accepted for
+scopes   := ctxutil.GetScopes(ctx)              // []string — the token's scopes (scope + scp) — nil when absent
 ```
 
 > `GetTenantTier`/`WithTenantTier` are deprecated aliases for `GetUserPlan`/`WithUserPlan`; use
@@ -670,6 +671,17 @@ auth := jwtauth.New(jwksURL, issuer, logger,
   instead; a plain `tenant_id` is then ignored. The value must be a UUID string (anything else
   is a 401); without the claim no tenant is set and `httpware.RequireTenant` rejects the request.
   An empty name rejects every token (fail closed).
+- **Scopes.** `SocrateClaims.Scopes()` merges the `scope` claim (a space-separated string, what
+  Socrate emits) and `scp` (a JSON array or a single string): every value split on spaces, empty
+  entries dropped, duplicates kept once, in the token's order. `Handler` stores them for
+  `ctxutil.GetScopes`. `RequireScopes(a, b, …)` makes every token carry all of them; a valid
+  token that lacks one gets **403** `forbidden` through the configured `ErrorWriter`, with
+  `WWW-Authenticate: Bearer error="insufficient_scope", scope="a b"` (RFC 6750 §3.1). To require
+  different scopes on different route groups behind one middleware, mount
+  `auth.ScopeGuard(a, …)` after `auth.Handler` on each group; without `Handler` in front it
+  answers 401. Both fail closed: no non-empty scope, or a value that is not an RFC 6749 §3.3
+  scope-token (a space, `"`, `\` or non-ASCII), rejects every request and logs an error. The last
+  `RequireScopes` option wins.
 - **Authentication facts.** `auth_time` and `amr` (when and how the user authenticated) are
   exposed as `ctxutil.GetAuthTime` / `ctxutil.GetAMR`. They are what a step-up or MFA check needs;
   `pep` uses them to honour policy obligations.

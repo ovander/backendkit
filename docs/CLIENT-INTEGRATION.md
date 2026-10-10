@@ -288,6 +288,7 @@ This trips people up, so it's worth stating plainly:
 | `email`, `name` | ❌ **not** in access tokens | present in ID tokens / `userinfo` only |
 | `tenant_id` | ⚠️ only if the server is configured to issue it | else `ctxutil.GetTenantID` → `uuid.Nil`; Socrate issues it as `https://socrate/tenant_id` (see "Tenant isolation", §9) |
 | `plan` | ⚠️ only if the server is configured to issue it | else `ctxutil.GetUserPlan` → `"freemium"` |
+| `scope` | ✅ space-separated string | `ctxutil.GetScopes`; see "Requiring a scope", §9 |
 
 **`role` is the user's role in the application the token was issued for**, not in yours.
 All applications on one Socrate share its signing keys, so without
@@ -1074,6 +1075,46 @@ r.With(gate.Require(tiering.PlanPro)).Get("/analytics", analyticsHandler)
 `Require` reads `ctxutil.GetUserPlan` (defaults to `"freemium"` when the server
 doesn't issue a `plan` claim) and blocks lower tiers, pointing them at your
 upgrade URL.
+
+### Requiring a scope
+
+A route group meant for a service account should accept only tokens that carry
+its scope. `jwtauth.RequireScopes(...)` applies to every route behind the
+middleware; `auth.ScopeGuard(...)` guards one route group, so one middleware can
+serve several groups (backendkit, unreleased: #116):
+
+```go
+auth := jwtauth.New(jwksURL, issuer, logger, jwtauth.WithAudience(clientID))
+
+r.Group(func(r chi.Router) {
+	r.Use(auth.Handler)
+	r.Mount("/api/v1/reports", reportsRouter) // any valid token
+
+	r.Group(func(r chi.Router) {
+		r.Use(auth.ScopeGuard("swingdrift:worker")) // after auth.Handler
+		r.Mount("/api/v1/internal", workerRouter)
+	})
+})
+```
+
+A valid token without the scope gets **403** `forbidden` (through
+`WithErrorWriter`'s writer) and
+`WWW-Authenticate: Bearer error="insufficient_scope", scope="swingdrift:worker"`.
+The scopes come from the `scope` claim (space-separated) and `scp` (array or
+string), merged; read them with `ctxutil.GetScopes`.
+
+What a client-credentials token from Socrate carries:
+
+- `sub` is `"app:<numeric app id>"`, **not** the client_id. Identify a service
+  account by that `sub`, or by its audience (`ctxutil.GetAudiences`).
+- `scope` is the scope the client requested, `api` by default.
+
+Socrate validates requested scopes against a fixed list (`openid email profile
+offline_access api admin monitoring:read monitoring:write`), so asking for an
+application-defined scope such as `swingdrift:worker` fails with
+`invalid_scope` until a Socrate release with application-defined scopes
+(ovander/go-oauth2#336). Until then, guard such a group with a scope Socrate
+can issue, or check the service account's identity.
 
 ### Tenant isolation (`httpware.RequireTenant`)
 

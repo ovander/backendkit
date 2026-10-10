@@ -150,3 +150,26 @@ func TestGetAudiences_Missing(t *testing.T) {
 		t.Errorf("expected nil for an empty set, got %q", got)
 	}
 }
+
+func TestGetScopes_RoundTripIsCopied(t *testing.T) {
+	in := []string{"api", "swingdrift:worker"}
+	ctx := ctxutil.WithScopes(context.Background(), in)
+	in[0] = "changed"
+	got := ctxutil.GetScopes(ctx)
+	if len(got) != 2 || got[0] != "api" || got[1] != "swingdrift:worker" {
+		t.Fatalf("GetScopes = %q, want [api swingdrift:worker]", got)
+	}
+	got[1] = "changed"
+	if again := ctxutil.GetScopes(ctx); again[1] != "swingdrift:worker" {
+		t.Errorf("changing the result changed the context: %q", again)
+	}
+}
+
+func TestGetScopes_Missing(t *testing.T) {
+	if got := ctxutil.GetScopes(context.Background()); got != nil {
+		t.Errorf("expected nil, got %q", got)
+	}
+	if got := ctxutil.GetScopes(ctxutil.WithScopes(context.Background(), nil)); got != nil {
+		t.Errorf("expected nil for an empty set, got %q", got)
+	}
+}

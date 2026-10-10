@@ -39,6 +39,7 @@ const (
 	authTimeKey     contextKey = "auth_time"
 	amrKey          contextKey = "amr"
 	audiencesKey    contextKey = "audiences"
+	scopesKey       contextKey = "scopes"
 )
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -230,6 +231,23 @@ func WithAudiences(ctx context.Context, aud []string) context.Context {
 // The result is a copy: changing it does not change the context.
 func GetAudiences(ctx context.Context) []string {
 	if v, ok := ctx.Value(audiencesKey).([]string); ok && len(v) > 0 {
+		return append([]string(nil), v...)
+	}
+	return nil
+}
+
+// WithScopes stores the OAuth scopes of the token. Set by jwtauth.Middleware
+// from the token's scope and scp claims (jwtauth.SocrateClaims.Scopes): in the
+// token's order, without duplicates or empty entries. The slice is copied.
+func WithScopes(ctx context.Context, scopes []string) context.Context {
+	return context.WithValue(ctx, scopesKey, append([]string(nil), scopes...))
+}
+
+// GetScopes returns the scopes stored by WithScopes, or nil when absent (e.g. a
+// token without scope, or a test that bypasses the middleware). The result is
+// a copy: changing it does not change the context.
+func GetScopes(ctx context.Context) []string {
+	if v, ok := ctx.Value(scopesKey).([]string); ok && len(v) > 0 {
 		return append([]string(nil), v...)
 	}
 	return nil

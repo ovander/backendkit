@@ -57,6 +57,13 @@ type SocrateClaims struct {
 	// including a policy obligation (pep) — needs to look at.
 	AuthTime int64    `json:"auth_time,omitempty"`
 	Amr      []string `json:"amr,omitempty"`
+	// Scope and Scp carry the token's OAuth scopes: scope is a space-separated
+	// string (RFC 9068 §2.2.3; what Socrate emits), scp a JSON array of strings
+	// or a single string (Azure AD / Okta style). Read them through Scopes, which
+	// merges both. A scope or scp claim of any other JSON type makes the token
+	// invalid, as a malformed aud does.
+	Scope string           `json:"scope,omitempty"`
+	Scp   jwt.ClaimStrings `json:"scp,omitempty"`
 
 	// Custom claims — require server-side configuration to be populated.
 	// With WithTenantClaim, the middleware replaces TenantID with the value of
@@ -69,6 +76,28 @@ type SocrateClaims struct {
 	Name  string `json:"name,omitempty"`
 
 	jwt.RegisteredClaims
+}
+
+// Scopes returns the token's OAuth scopes: the space-separated values of the
+// scope claim, then those of the scp claim. Each scp value, whether scp is a
+// JSON array or a single string, is also split on spaces, so "a b" means the
+// two scopes a and b wherever it appears. Empty entries are dropped and
+// duplicates kept once, in the token's order. It returns nil when the token
+// carries no scope.
+func (c *SocrateClaims) Scopes() []string {
+	var out []string
+	add := func(list string) {
+		for _, s := range strings.Split(list, " ") {
+			if s != "" && !slices.Contains(out, s) {
+				out = append(out, s)
+			}
+		}
+	}
+	add(c.Scope)
+	for _, v := range c.Scp {
+		add(v)
+	}
+	return out
 }
 
 // jwksKey represents a single key from a JWKS endpoint.
@@ -104,6 +133,11 @@ type Middleware struct {
 	// An empty tenantClaim with tenantClaimSet rejects every token.
 	tenantClaim    string
 	tenantClaimSet bool
+	// requiredScopes are the scopes every token must carry (RequireScopes).
+	// scopesSet records that the option was given, so that RequireScopes with
+	// no usable scope rejects every token instead of disabling the check.
+	requiredScopes []string
+	scopesSet      bool
 	logger         *logrus.Entry
 	httpClient     *http.Client
 	cacheTTL       time.Duration
@@ -198,11 +232,32 @@ func WithAudiences(expectedAudiences ...string) Option {
 	}
 }
 
+// RequireScopes makes the middleware accept a token only when it carries every
+// listed scope (SocrateClaims.Scopes, from the scope and scp claims). A valid
+// token that lacks one is rejected with 403 forbidden, written through the
+// configured ErrorWriter, and the header
+// WWW-Authenticate: Bearer error="insufficient_scope", scope="<the required
+// scopes>" (RFC 6750 §3.1): the token is valid, it is not enough. The check runs
+// after every other one, so a token that fails them still gets its 401.
+//
+// Empty strings and duplicates are ignored. Fail closed: when no non-empty
+// scope is given, or when any scope is not a valid scope-token (RFC 6749 §3.3:
+// printable ASCII without space, '"' or '\'), every token is rejected with 403
+// (and New logs an error), rather than the check being disabled. The last
+// RequireScopes option passed to New wins. To require different scopes on
+// different route groups behind one Middleware, use Middleware.ScopeGuard.
+func RequireScopes(scopes ...string) Option {
+	return func(m *Middleware) {
+		m.requiredScopes, m.scopesSet = scopeSet(scopes), true
+	}
+}
+
 // WithErrorWriter sets how the middleware writes its 401 responses (missing
 // or invalid bearer, invalid or expired token, revoked token, invalid tenant
-// claim). Pass apierror.ProblemWriter for RFC 9457 application/problem+json.
-// Without it, or with nil, the default apierror JSON envelope is written,
-// byte-for-byte as before.
+// claim) and its 403 responses (insufficient scope). Pass
+// apierror.ProblemWriter for RFC 9457 application/problem+json. Without it, or
+// with nil, the default apierror JSON envelope is written, byte-for-byte as
+// before.
 func WithErrorWriter(write apierror.ErrorWriter) Option {
 	return func(m *Middleware) { m.writeErr = write }
 }
@@ -326,7 +381,47 @@ func New(jwksURL, issuer string, logger *logrus.Entry, opts ...Option) *Middlewa
 	if m.tenantClaimSet && m.tenantClaim == "" && logger != nil {
 		logger.Error("jwtauth: WithTenantClaim was given an empty claim name — every token is rejected")
 	}
+	if m.scopesSet && len(m.requiredScopes) == 0 && logger != nil {
+		logger.Error("jwtauth: RequireScopes was given no valid scope — every token is rejected")
+	}
 	return m
+}
+
+// ScopeGuard returns a middleware that lets a request through only when the
+// token validated by Handler carries every listed scope, so that one
+// Middleware can serve several route groups with different scope needs:
+//
+//	r.Use(auth.Handler)
+//	r.With(auth.ScopeGuard("swingdrift:worker")).Mount("/api/v1/internal", workerRouter)
+//
+// Mount it after Handler: it reads the scopes Handler stored in the request
+// context (ctxutil.GetScopes). A request that Handler did not validate is
+// rejected with 401, as Handler rejects a missing token. A token without one of
+// the scopes is rejected with 403 and WWW-Authenticate, exactly as with the
+// RequireScopes option, through the Middleware's ErrorWriter.
+//
+// The same rules apply to its arguments: empty strings and duplicates are
+// ignored, and when no non-empty scope is given, or any scope is not a valid
+// scope-token, every request is rejected with 403 and an error is logged when
+// ScopeGuard is called.
+func (m *Middleware) ScopeGuard(scopes ...string) func(http.Handler) http.Handler {
+	required := scopeSet(scopes)
+	if len(required) == 0 && m.logger != nil {
+		m.logger.Error("jwtauth: ScopeGuard was given no valid scope — every request is rejected")
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if validated, _ := r.Context().Value(validatedKey{}).(bool); !validated {
+				m.logger.Warn("scope guard reached without a validated token")
+				m.writeError(w, r, apierror.Unauthorized("missing or invalid authorization header"))
+				return
+			}
+			if !m.checkScopes(w, r, required, ctxutil.GetScopes(r.Context())) {
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // Handler is the chi-compatible middleware function.
@@ -415,6 +510,19 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 		if aud := m.acceptedAudiences(claims.Audience); len(aud) > 0 {
 			ctx = ctxutil.WithAudiences(ctx, aud)
 		}
+		// scope / scp — the token's scopes (ctxutil.GetScopes).
+		scopes := claims.Scopes()
+		if len(scopes) > 0 {
+			ctx = ctxutil.WithScopes(ctx, scopes)
+		}
+
+		// RequireScopes — last, so a token that fails another check gets its 401.
+		if m.scopesSet && !m.checkScopes(w, r, m.requiredScopes, scopes) {
+			return
+		}
+
+		// Mark the request as validated by Handler, for ScopeGuard.
+		ctx = context.WithValue(ctx, validatedKey{}, true)
 
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -423,6 +531,70 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 // ────────────────────────────────────────────────────────────────────────────
 // Internal helpers
 // ────────────────────────────────────────────────────────────────────────────
+
+// validatedKey marks a request context whose bearer token Handler validated.
+// It is private to jwtauth, so only Handler can set it.
+type validatedKey struct{}
+
+// scopeSet returns the non-empty scopes, without duplicates, in order. It
+// returns nil — no usable scope, so every token is rejected — when any scope
+// is not a valid scope-token.
+func scopeSet(scopes []string) []string {
+	var set []string
+	for _, s := range scopes {
+		if s == "" {
+			continue
+		}
+		if !validScopeToken(s) {
+			return nil
+		}
+		if !slices.Contains(set, s) {
+			set = append(set, s)
+		}
+	}
+	return set
+}
+
+// validScopeToken reports whether s is a scope-token (RFC 6749 §3.3):
+// 1*( %x21 / %x23-5B / %x5D-7E ), printable ASCII without space, '"' or '\'.
+// It is what makes a scope safe to quote in WWW-Authenticate.
+func validScopeToken(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < 0x21 || c > 0x7E || c == '"' || c == '\\' {
+			return false
+		}
+	}
+	return true
+}
+
+// checkScopes reports whether have contains every scope of required. When it
+// does not, or when required is empty (a misconfiguration, which fails closed),
+// it writes the 403 insufficient_scope response and returns false.
+func (m *Middleware) checkScopes(w http.ResponseWriter, r *http.Request, required, have []string) bool {
+	ok := len(required) > 0
+	for _, s := range required {
+		if !slices.Contains(have, s) {
+			ok = false
+			break
+		}
+	}
+	if ok {
+		return true
+	}
+	challenge := `Bearer error="insufficient_scope"`
+	if len(required) > 0 {
+		// Each scope is a validated scope-token: no '"', '\' or space to escape.
+		challenge += `, scope="` + strings.Join(required, " ") + `"`
+	}
+	m.logger.WithField("required_scopes", required).Warn("insufficient scope")
+	w.Header().Set("WWW-Authenticate", challenge)
+	m.writeError(w, r, apierror.Forbidden("insufficient scope"))
+	return false
+}
 
 // acceptedAudiences returns the token's aud values the token was accepted for:
 // those in the configured set when an audience check is configured, else all
