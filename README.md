@@ -408,6 +408,7 @@ ver      := ctxutil.GetTokenVersion(ctx)        // int — 0 when absent
 authTime := ctxutil.GetAuthTime(ctx)            // int64 Unix seconds — 0 when absent
 amr      := ctxutil.GetAMR(ctx)                 // []string, e.g. ["pwd", "mfa"] — nil when absent
 aud      := ctxutil.GetAudiences(ctx)           // []string — the audiences the token was accepted for
+scopes   := ctxutil.GetScopes(ctx)              // []string — the token's scopes (scope and scp claims), nil when none
 ```
 
 > `GetTenantTier`/`WithTenantTier` are deprecated aliases for `GetUserPlan`/`WithUserPlan`; use
@@ -663,6 +664,15 @@ auth := jwtauth.New(jwksURL, issuer, logger,
   user's current value; with none configured, behaviour is unchanged. The checker's context
   already carries the raw token (`ctxutil.GetRawJWT`), so it can also introspect the token at
   Socrate (`/oauth/introspect`); the identity values are set only after the check passes.
+- **Scopes.** `SocrateClaims.Scopes()` and `ctxutil.GetScopes` give the token's OAuth scopes:
+  the space-separated `scope` claim Socrate emits (RFC 9068) and the `scp` claim (an array, or a
+  string) other issuers use, merged without duplicates. `RequireScopes(s, …)` makes the
+  middleware accept only a token that carries every one of them; a valid token that lacks one
+  gets **403** (RFC 6750 `insufficient_scope`, with a `WWW-Authenticate` header naming the
+  scopes) through the configured error writer. Use it on the route group of a service account,
+  e.g. `jwtauth.New(jwksURL, issuer, log, jwtauth.WithAudience("my-api"), jwtauth.RequireScopes("my-api:worker"))`.
+  Called with no non-empty scope it rejects every token (fail closed). Without `RequireScopes`, a
+  malformed `scope`/`scp` claim is ignored, so existing callers see no change.
 - **Tenant claim.** The tenant is read from `tenant_id` by default. A stock Socrate has no tenant
   model: a tenant reaches tokens only through a client's claim mapping
   (`"tenant_id": "user.attributes.tenant_id"`), under Socrate's claims namespace, as
