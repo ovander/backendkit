@@ -1,0 +1,182 @@
+# Conformance: backendkit against a real Socrate (#101).
+#
+# Builds Socrate from ovander/go-oauth2 (main by default), starts it on a
+# PostgreSQL 16 service container, seeds three clients and one user per suite
+# package (conformance/testdata/socrate-seed, throwaway secrets generated in
+# the job), and runs the live tests behind the `conformance` build tag: the
+# fixtures in conformance/ against real tokens and documents, and jwtauth,
+# socrate, bff and pep against the live server. scripts/conformance-local.sh
+# does all of it, here and on a workstation alike.
+#
+# Informational: it is not a required check and never gates a backendkit pull
+# request. It runs nightly, on demand, and on pull requests that change the
+# suite itself. A failed nightly or manual run opens an issue labelled
+# `conformance` (or comments on the open one).
+name: Conformance
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      socrate_ref:
+        description: ovander/go-oauth2 ref to build (branch, tag or commit)
+        required: false
+        default: main
+  pull_request:
+    paths:
+      - .github/workflows/conformance.yml
+      - conformance/**
+      - scripts/conformance-local.sh
+      - "**/*conformance*_test.go"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conformance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  conformance:
+    name: Socrate conformance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: socrate
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: socrate_conformance
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U socrate" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      CONFORMANCE_DATABASE_URL: postgres://socrate:ci-only@localhost:5432/socrate_conformance?sslmode=disable
+      CONFORMANCE_WORKDIR: ${{ github.workspace }}/conformance-work
+      SOCRATE_REF: ${{ inputs.socrate_ref || 'main' }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: backendkit
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ovander/go-oauth2
+          ref: ${{ env.SOCRATE_REF }}
+          path: socrate
+
+      # Each module is built with the Go its go.mod names: its toolchain line,
+      # or its go line when there is none (the rule both repositories' CI use).
+      - name: Read the Go versions from go.mod
+        id: go
+        run: |
+          gover() { awk '/^toolchain /{t=$2} /^go /{g="go"$2} END{print (t != "" ? t : g)}' "$1" | sed 's/^go//'; }
+          echo "socrate=$(gover socrate/go.mod)" >> "$GITHUB_OUTPUT"
+          echo "backendkit=$(gover backendkit/go.mod)" >> "$GITHUB_OUTPUT"
+          echo "Socrate $(git -C socrate rev-parse --short HEAD) ($SOCRATE_REF)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up Go ${{ steps.go.outputs.socrate }} (Socrate)
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.go.outputs.socrate }}
+          cache: true
+          cache-dependency-path: |
+            socrate/go.sum
+            backendkit/go.sum
+
+      - name: Build Socrate
+        working-directory: socrate
+        env:
+          WANT_GO: ${{ steps.go.outputs.socrate }}
+        run: |
+          test "$(go env GOVERSION)" = "go$WANT_GO"
+          go build -o "$RUNNER_TEMP/socrate" ./cmd/server
+
+      - name: Set up Go ${{ steps.go.outputs.backendkit }} (backendkit)
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.go.outputs.backendkit }}
+          cache: false
+
+      # Boots the binary on loopback (migrating the empty database), seeds it,
+      # and runs `go test -tags conformance -run '^TestConformance' ./...`.
+      - name: Run the conformance suite
+        working-directory: backendkit
+        env:
+          SOCRATE_SRC: ${{ github.workspace }}/socrate
+          SOCRATE_BIN: ${{ runner.temp }}/socrate
+          WANT_GO: ${{ steps.go.outputs.backendkit }}
+        run: |
+          test "$(go env GOVERSION)" = "go$WANT_GO"
+          scripts/conformance-local.sh
+
+      - name: Socrate log to the job summary
+        if: failure()
+        run: |
+          {
+            echo "### Socrate server log (last 200 lines)"
+            echo '```'
+            tail -200 "$CONFORMANCE_WORKDIR/server.log" 2>/dev/null || echo "(no log: the server did not start)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the Socrate log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: socrate-server-log
+          path: ${{ env.CONFORMANCE_WORKDIR }}/server.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Separate job so only this one holds issues: write.
+  report:
+    name: Report a failed run
+    needs: conformance
+    if: failure() && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/github-script@v7
+        env:
+          SOCRATE_REF: ${{ inputs.socrate_ref || 'main' }}
+        with:
+          script: |
+            const label = 'conformance';
+            const repo = context.repo;
+            const run = `${context.serverUrl}/${repo.owner}/${repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              `The Socrate conformance run failed (${context.eventName}, ovander/go-oauth2 \`${process.env.SOCRATE_REF}\`).`,
+              '',
+              `Run: ${run}`,
+              '',
+              'Either Socrate changed a shape backendkit or its fixtures rely on (update conformance/fixtures, ' +
+              'and the affected package, in a pull request), or the suite itself broke. ' +
+              'Reproduce with `scripts/conformance-local.sh`.',
+            ].join('\n');
+            try {
+              await github.rest.issues.getLabel({ ...repo, name: label });
+            } catch (e) {
+              if (e.status !== 404) throw e;
+              await github.rest.issues.createLabel({
+                ...repo, name: label, color: 'b60205',
+                description: 'Nightly Socrate conformance run (#101)',
+              });
+            }
+            const { data: open } = await github.rest.issues.listForRepo({
+              ...repo, state: 'open', labels: label, per_page: 1,
+            });
+            if (open.length > 0) {
+              await github.rest.issues.createComment({ ...repo, issue_number: open[0].number, body });
+              core.info(`Commented on #${open[0].number}`);
+            } else {
+              const { data: issue } = await github.rest.issues.create({
+                ...repo, title: 'Socrate conformance run failed', labels: [label], body,
+              });
+              core.info(`Opened #${issue.number}`);
+            }
