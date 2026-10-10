@@ -147,7 +147,9 @@ token code comes back (Ascenda's `noBrowserTokens.spec.ts`). `bff.MemoryStore` l
 sessions on restart, which signs everyone out. To keep them across deploys, or to run several
 instances, use `bff.NewPostgresStore` (backendkit v1.17.0): it stores the sessions encrypted in a
 table of a database you already run, under a 32-byte key kept with the BFF's other secrets
-(README, `bff` section).
+(README, `bff` section). Create the table in your migrations and pass
+`bff.WithPostgresManagedSchema()`, so the BFF's role needs no DDL rights. Behind several
+instances, keep the pending logins in `bff.NewPostgresPendingLoginStore` too (v1.25.0).
 
 ### 3.8 Accounts live in Socrate: sign-up, profile edits, avatars
 

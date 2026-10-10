@@ -39,6 +39,7 @@ type PostgresStore struct {
 	now      func() time.Time
 	onError  func(op string, err error)
 	managed  bool
+	auto     bool
 }
 
 // PostgresStoreTombstoneTTL is how long Delete keeps a tombstone that stops a
@@ -88,6 +89,17 @@ func WithPostgresManagedSchema() PostgresStoreOption {
 	return func(p *PostgresStore) { p.managed = true }
 }
 
+// WithPostgresAutoSchema tells NewPostgresStore to create its table and index
+// itself (CREATE … IF NOT EXISTS), which needs CREATE on the schema and
+// ownership of the table. This is what NewPostgresStore does with neither
+// schema option, but without either it also logs a start-up warning: name the
+// choice explicitly. Prefer WithPostgresManagedSchema in production; a future
+// major version may make it the default. It cannot be combined with
+// WithPostgresManagedSchema.
+func WithPostgresAutoSchema() PostgresStoreOption {
+	return func(p *PostgresStore) { p.auto = true }
+}
+
 // NewPostgresStore checks the connection, creates the table if it does not
 // exist (or, with WithPostgresManagedSchema, checks the existing one) and
 // returns the store. key encrypts the session data and must be 32
@@ -121,6 +133,14 @@ func NewPostgresStore(ctx context.Context, db *sql.DB, key []byte, idle, absolut
 	}
 	if !tableNamePattern.MatchString(p.table) {
 		return nil, fmt.Errorf("bff: postgres store: invalid table name %q", p.table)
+	}
+	if p.managed && p.auto {
+		return nil, errors.New("bff: postgres store: WithPostgresManagedSchema and WithPostgresAutoSchema contradict each other")
+	}
+	if !p.managed && !p.auto {
+		log.Printf("bff: postgres store: neither WithPostgresManagedSchema nor WithPostgresAutoSchema given; "+
+			"creating table %s at start-up. Pass WithPostgresAutoSchema to keep this, or create the table in your "+
+			"migrations and pass WithPostgresManagedSchema (see its doc comment)", p.table)
 	}
 	if err := db.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("bff: postgres store: %w", err)

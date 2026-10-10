@@ -123,7 +123,7 @@ func pgPendingStore(t *testing.T, ttl time.Duration, opts ...PendingLoginStoreOp
 	t.Helper()
 	_, db := pgStore(t, time.Hour, time.Hour) // same database setup as the session store tests
 	table := fmt.Sprintf("bff_test_pending_%d", time.Now().UnixNano())
-	opts = append([]PendingLoginStoreOption{WithPendingLoginTable(table),
+	opts = append([]PendingLoginStoreOption{WithPendingLoginTable(table), WithPendingLoginAutoSchema(),
 		WithPendingLoginErrorHandler(func(op string, err error) { t.Errorf("%s: %v", op, err) })}, opts...)
 	s, err := NewPostgresPendingLoginStore(context.Background(), db, testKey, ttl, opts...)
 	if err != nil {

@@ -14,6 +14,19 @@ memory store or in PostgreSQL shared by several instances (encrypted, single-use
 signature and no changed default.
 
 ### Added
+- **`bff.WithPostgresAutoSchema()` and `bff.WithPendingLoginAutoSchema()`: name the schema choice**
+  (#100). The Postgres stores create their table at start-up unless told the migrations own it
+  (`WithPostgresManagedSchema()` / `WithPendingLoginManagedSchema()`), which needs DDL rights the
+  BFF's role should not hold in production. Making managed the default would break every caller
+  relying on the table being created, so v1 keeps the behaviour and makes the choice explicit:
+  - the new `…AutoSchema()` options name today's behaviour;
+  - with neither option a store still creates its table and logs a start-up warning naming both;
+  - both together are refused.
+
+  The README, integration guide and migration guide now lead with managed schema. The default may
+  flip in a future major version only.
+
+### Added
 - **`bff.PendingLoginStore`: pending logins that survive across instances** (#98). Between `/login`
   and the callback a BFF keeps the PKCE verifier, the `LoginBinding` nonce and the return path,
   keyed by the OAuth state. Each application kept them in its own in-memory map (oauth2-admin), or
