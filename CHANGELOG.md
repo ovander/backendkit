@@ -6,6 +6,16 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Added
+- **`jwtauth.RequireScopes`, `SocrateClaims.Scopes()` and `ctxutil.GetScopes`: authorise by OAuth
+  scope** (#116). The middleware reads the token's scopes from the space-separated `scope` claim
+  (what Socrate emits) and from `scp` (an array or a string), merged in token order without
+  duplicates, and stores them in the context. `RequireScopes(…)` rejects a valid token that lacks
+  one of them with 403 (`insufficient_scope`, with `WWW-Authenticate`) through the configured error
+  writer, before any identity is injected; with no non-empty scope it rejects every token. A
+  malformed `scope`/`scp` claim only matters with `RequireScopes` (it is then a 403): callers that do
+  not require scopes see no change.
+
 ## [1.25.0] - 2026-10-10
 
 Minor release on the **v1** line: additive API only. `bff.PendingLoginStore` keeps pending logins
