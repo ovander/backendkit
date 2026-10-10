@@ -1,0 +1,9 @@
+{
+  "app_roles": "<app_roles>",
+  "email": "<email>",
+  "email_verified": true,
+  "name": "<name>",
+  "preferred_username": "<email>",
+  "role": "<role>",
+  "sub": "<sub>"
+}

@@ -1,0 +1,24 @@
+{
+  "acr": "pwd",
+  "amr": [
+    "pwd"
+  ],
+  "app_roles": "<app_roles>",
+  "aud": [
+    "<client_id>"
+  ],
+  "auth_time": "<auth_time>",
+  "exp": "<exp>",
+  "iat": "<iat>",
+  "iss": "<issuer>",
+  "jti": "<jti>",
+  "nbf": "<nbf>",
+  "role": "<role>",
+  "roles": [
+    "<role>"
+  ],
+  "scope": "<scope:openid profile email>",
+  "sub": "<sub>",
+  "token_version": "<token_version>",
+  "type": "access"
+}
