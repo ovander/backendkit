@@ -6,6 +6,14 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Fixed
+- **`WithPendingLoginManagedSchema` now also checks the `UPDATE` privilege.** `Put` is an
+  `INSERT … ON CONFLICT DO UPDATE`, which needs `UPDATE` on the table, but the start-up check
+  verified only `SELECT`, `INSERT` and `DELETE`. A role granted exactly those three passed the
+  check and then failed every sign-in. Such a role is now refused at start-up, naming `UPDATE`;
+  grant it `SELECT, INSERT, UPDATE, DELETE`, as for the session table. Found while moving the
+  monitoring console to the managed schema.
+
 ## [1.25.0] - 2026-10-10
 
 Minor release on the **v1** line: additive API only. `bff.PendingLoginStore` keeps pending logins
