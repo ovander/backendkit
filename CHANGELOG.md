@@ -6,6 +6,26 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Added
+- **`conformance`: what Socrate really issues, as fixtures for your Socrate mock, checked nightly
+  against a live Socrate** (#101). Each consumer built its own Socrate mock and found the
+  differences in production. The new package (no other backendkit import) embeds the claim sets
+  of Socrate's access, ID and refresh tokens (authorization code with and without MFA, refresh,
+  `client_credentials`, `AUDIENCE_MODE=dual`, namespaced custom claims, DPoP-bound), its token,
+  userinfo and introspection responses, and its discovery and JWKS documents, with placeholders
+  for volatile values.
+  - `Names`, `Raw`, `Load(name, Params)`, `Sign(name, Params, Key)`, `JWKS`, `Discovery`,
+    `NewKey`, and `Match(name, doc, Params)`, which checks a document against a fixture (same
+    keys, values by rule).
+  - Live tests behind the `conformance` build tag check every fixture against a running Socrate,
+    and test `jwtauth`, `socrate`, `bff` (authorize → callback → refresh → logout) and `pep`
+    against it. `go test ./...` and CI are unchanged.
+  - `scripts/conformance-local.sh` builds Socrate from a checkout, starts and seeds it on a
+    scratch database (`conformance/testdata/socrate-seed`), and runs them. The new **Conformance**
+    workflow does the same nightly, on demand, and on pull requests that change the suite. It is
+    informational, not a required check. A failed nightly or manual run opens or updates an issue
+    labelled `conformance`.
+
 ## [1.25.0] - 2026-10-10
 
 Minor release on the **v1** line: additive API only. `bff.PendingLoginStore` keeps pending logins

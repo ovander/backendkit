@@ -31,7 +31,8 @@ Go developers writing an API or a BFF in the Socrate suite.
   [apierror](#apierror) · [ctxutil](#ctxutil) · [httpware](#httpware) ·
   [gormlogger](#gormlogger) · [socrate](#socrate) · [jwtauth](#jwtauth) · [bff](#bff) ·
   [pep](#pep) · [tiering](#tiering) · [aigateway](#aigateway) · [ailang](#ailang) ·
-  [ainarration](#ainarration) · [pagination](#pagination) · [buildinfo](#buildinfo)
+  [ainarration](#ainarration) · [pagination](#pagination) · [buildinfo](#buildinfo) ·
+  [conformance](#conformance)
 - [Environment variables](#environment-variables)
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
@@ -87,6 +88,7 @@ backendkit puts that foundation in one versioned dependency:
 | [`ainarration`](#ainarration) | Generic LRU+TTL narration cache and `CacheKey` helper |
 | [`pagination`](#pagination) | Query-param parsing and `PagedResponse` |
 | [`buildinfo`](#buildinfo) | Build-time version metadata (`-ldflags`) and a `/version` HTTP handler |
+| [`conformance`](#conformance) | Fixtures of what Socrate really issues (token claim sets, token, userinfo and introspection responses, discovery, JWKS) and helpers to sign Socrate-shaped tokens and check documents against them, for your Socrate mock; verified nightly against a live Socrate |
 
 `go get` pulls the whole module, but importing one package brings in only what it builds on: the
 shared `ctxutil` and `apierror` primitives, plus `socrate` for the two packages that exist to talk
@@ -114,6 +116,7 @@ to Socrate (`bff`, `pep`) and `ailang` for `aigateway`.
 | Parse `?page`/`?per_page` and return paged lists | [`pagination`](#pagination) |
 | Log GORM queries through logrus / flag slow queries | [`gormlogger`](#gormlogger) |
 | Expose build/version info on a `/version` endpoint | [`buildinfo`](#buildinfo) |
+| Test against Socrate-shaped tokens and documents instead of a hand-written mock | [`conformance`](#conformance) |
 
 ---
 
@@ -1037,6 +1040,49 @@ info := buildinfo.Get()
 
 Full API: [pkg.go.dev/…/buildinfo](https://pkg.go.dev/github.com/ovander/backendkit/buildinfo).
 
+### conformance
+
+What Socrate really issues, as fixtures a consumer's Socrate mock loads instead of hand-writing
+claims: the claim sets of its access, ID and refresh tokens (authorization code with and without
+MFA, refresh, `client_credentials`, `AUDIENCE_MODE=dual`, namespaced custom claims, DPoP-bound),
+its token, userinfo and introspection responses, and its discovery and JWKS documents. Volatile
+and deployment-specific values are placeholders (`<sub>`, `<client_id>`, `<exp>`, `<ns>tenant_id`,
+…) that `Params` fills. The package imports nothing else from backendkit.
+
+```go
+key, _ := conformance.NewKey()                     // RSA-2048, UUID kid, like Socrate's key ring
+jwks, _ := conformance.JWKS(key)                   // serve at /.well-known/jwks.json
+disc, _ := conformance.Discovery(mock.URL)         // serve at /.well-known/openid-configuration
+
+tok, _ := conformance.Sign("access/authorization_code", conformance.Params{
+    Issuer: mock.URL, ClientID: "my-app", Subject: "42", Role: "editor",
+}, key)                                            // the token Socrate would issue
+
+claims, _ := conformance.Load("access/client_credentials", conformance.Params{AppID: 12})
+// claims["sub"] == "app:12", claims["aud"] == ["my-app"], claims["scope"] == "api"
+
+err := conformance.Match("access/authorization_code", myMockClaims, conformance.Params{})
+// nil only if the document has exactly the fixture's keys and every value fits
+```
+
+| Function | Purpose |
+|---|---|
+| `Names()` | Every fixture name, e.g. `access/client_credentials_custom_claims`, `discovery` |
+| `Raw(name)` | The fixture JSON, placeholders unresolved |
+| `Load(name, Params)` | The fixture with every placeholder filled (defaults: the `Default…` constants) |
+| `Sign(name, Params, Key)` | A token fixture as an RS256 JWS under Socrate's JOSE header |
+| `JWKS(keys…)` / `Discovery(issuer)` / `NewKey()` | The documents a mock serves, and a signing key |
+| `Match(name, doc, Params)` | Check a document against a fixture: same keys, literal values equal, placeholders by rule (exactly, when the `Params` field is set) |
+
+The fixtures stay honest because a nightly workflow (`.github/workflows/conformance.yml`) builds
+Socrate from `ovander/go-oauth2` `main`, seeds it, and checks every fixture against the real
+tokens and documents; the same run tests `jwtauth`, `socrate`, `bff` and `pep` against the live
+server. Those tests sit behind the `conformance` build tag, so `go test ./...` never needs a
+server; `scripts/conformance-local.sh` runs them locally (see [Testing](#testing)). A failed
+nightly run opens an issue labelled `conformance`.
+
+Full API: [pkg.go.dev/…/conformance](https://pkg.go.dev/github.com/ovander/backendkit/conformance).
+
 ---
 
 ## Environment variables
@@ -1098,6 +1144,21 @@ takes any `bff.TokenRefresher`; `bff.Gateway.Now` fixes the clock.
 `ainarration.NarrationCache.Flush()` resets the cache between test cases, and each package ships
 runnable `Example*` functions (visible on
 [pkg.go.dev](https://pkg.go.dev/github.com/ovander/backendkit)) that double as usage docs.
+
+When a test needs Socrate itself — a JWKS, a discovery document, a token with the claims a real
+server issues — build the mock from [`conformance`](#conformance) rather than writing claims by
+hand: the fixtures are checked against a live Socrate every night.
+
+backendkit's own live suite runs the same way locally. It wipes the given scratch database,
+builds Socrate from a checkout, starts and seeds it on loopback, and runs the tests behind the
+`conformance` build tag (they read `SOCRATE_*` variables, listed in the `conformance` package
+documentation, and fail without them):
+
+```bash
+SOCRATE_SRC=../go-oauth2 \
+CONFORMANCE_DATABASE_URL='postgres://user:pass@127.0.0.1:5432/socrate_conf?sslmode=disable' \
+scripts/conformance-local.sh
+```
 
 ---
 

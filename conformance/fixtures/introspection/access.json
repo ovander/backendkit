@@ -1,0 +1,18 @@
+{
+  "acr": "pwd",
+  "active": true,
+  "amr": [
+    "pwd"
+  ],
+  "aud": [
+    "<client_id>"
+  ],
+  "auth_time": "<auth_time>",
+  "client_id": "<client_id>",
+  "exp": "<exp>",
+  "iat": "<iat>",
+  "scope": "<scope:openid profile email>",
+  "sub": "<sub>",
+  "token_type": "Bearer",
+  "username": "<email>"
+}
