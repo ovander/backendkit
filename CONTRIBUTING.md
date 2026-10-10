@@ -8,7 +8,7 @@ policy decisions. Contributions are accepted under the project's licence,
 
 ## Development setup
 
-Requirements: Go (the `toolchain` line in `go.mod` downloads the exact version, 1.27.1; the
+Requirements: Go (the `toolchain` line in `go.mod` downloads the exact version, 1.27.2; the
 `go` line, 1.26.0, is the floor importers need, and CI also tests on it). The
 tests need no database and no network service.
 
@@ -44,7 +44,7 @@ go mod tidy && git diff --exit-code go.sum
 go build ./...
 go vet ./...
 go test -race -count=1 -timeout=120s ./...
-golangci-lint run ./...        # v2.14.0, built with Go 1.27.1
+golangci-lint run ./...        # v2.14.0, built with Go 1.27.2
 govulncheck ./...
 ```
 

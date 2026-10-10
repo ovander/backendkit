@@ -121,7 +121,7 @@ to Socrate (`bff`, `pep`) and `ailang` for `aigateway`.
 
 - **Go 1.26.0 or later** to import the module (the `go` line in `go.mod`). The floor is the
   oldest supported Go release: a backendkit upgrade never forces a newer Go on its importers, and
-  CI builds and tests on the floor itself. backendkit is developed with Go 1.27.1 (the
+  CI builds and tests on the floor itself. backendkit is developed with Go 1.27.2 (the
   `toolchain` line).
 - **A Socrate server** for the packages that talk to it: `jwtauth`, `socrate`, `bff` and `pep`.
   They are written for Socrate's API and claims, not as a generic OAuth toolkit. The other
