@@ -6,34 +6,15 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
-### Security
-- **Built and tested with Go 1.27.2** (`toolchain go1.27.2`). Go 1.27.2 fixes eight
-  standard-library vulnerabilities that govulncheck reaches from backendkit's code, in `net/http`
-  and its HTTP/2 implementation among them (e.g. GO-2026-6603, GO-2026-6605). backendkit's code
-  is unchanged, and the minimum Go stays 1.26.0. What matters for an importer is the Go it builds
-  with: build services with Go 1.27.2, or a patched 1.26 release. The CI test jobs are now named by
-  role, `Build & Test (toolchain)` and `Build & Test (floor)`, instead of by Go version, so a
-  future toolchain bump no longer renames a required check.
-
-## [1.25.0] - 2026-10-08
+## [1.25.0] - 2026-10-10
 
 Minor release on the **v1** line: additive API only. `bff.PendingLoginStore` keeps pending logins
 (PKCE verifier, `LoginBinding` nonce, return path) between `/login` and the callback, in a bounded
-memory store or in PostgreSQL shared by several instances (encrypted, single-use). No changed
-signature and no changed default.
-
-### Added
-- **`bff.WithPostgresAutoSchema()` and `bff.WithPendingLoginAutoSchema()`: name the schema choice**
-  (#100). The Postgres stores create their table at start-up unless told the migrations own it
-  (`WithPostgresManagedSchema()` / `WithPendingLoginManagedSchema()`), which needs DDL rights the
-  BFF's role should not hold in production. Making managed the default would break every caller
-  relying on the table being created, so v1 keeps the behaviour and makes the choice explicit:
-  - the new `…AutoSchema()` options name today's behaviour;
-  - with neither option a store still creates its table and logs a start-up warning naming both;
-  - both together are refused.
-
-  The README, integration guide and migration guide now lead with managed schema. The default may
-  flip in a future major version only.
+memory store or in PostgreSQL shared by several instances (encrypted, single-use). The Postgres
+stores take an explicit schema choice (`…AutoSchema()` / `…ManagedSchema()`, with a start-up
+warning when neither is given). backendkit is built and tested with Go 1.27.2, which fixes eight
+standard-library vulnerabilities; build your services with it too. No changed signature and no
+changed default.
 
 ### Added
 - **`bff.PendingLoginStore`: pending logins that survive across instances** (#98). Between `/login`
@@ -51,6 +32,26 @@ signature and no changed default.
     `WithPendingLoginErrorHandler()`.
 
   The session stores are unchanged.
+- **`bff.WithPostgresAutoSchema()` and `bff.WithPendingLoginAutoSchema()`: name the schema choice**
+  (#100). The Postgres stores create their table at start-up unless told the migrations own it
+  (`WithPostgresManagedSchema()` / `WithPendingLoginManagedSchema()`), which needs DDL rights the
+  BFF's role should not hold in production. Making managed the default would break every caller
+  relying on the table being created, so v1 keeps the behaviour and makes the choice explicit:
+  - the new `…AutoSchema()` options name today's behaviour;
+  - with neither option a store still creates its table and logs a start-up warning naming both;
+  - both together are refused.
+
+  The README, integration guide and migration guide now lead with managed schema. The default may
+  flip in a future major version only.
+
+### Security
+- **Built and tested with Go 1.27.2** (`toolchain go1.27.2`). Go 1.27.2 fixes eight
+  standard-library vulnerabilities that govulncheck reaches from backendkit's code, in `net/http`
+  and its HTTP/2 implementation among them (e.g. GO-2026-6603, GO-2026-6605). backendkit's code
+  is unchanged, and the minimum Go stays 1.26.0. What matters for an importer is the Go it builds
+  with: build services with Go 1.27.2, or a patched 1.26 release. The CI test jobs are now named by
+  role, `Build & Test (toolchain)` and `Build & Test (floor)`, instead of by Go version, so a
+  future toolchain bump no longer renames a required check.
 
 ## [1.24.0] - 2026-10-08
 
