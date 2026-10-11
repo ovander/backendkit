@@ -6,6 +6,13 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+## [1.26.1] - 2026-10-11
+
+Patch release on the **v1** line: `MemoryStore` keeps a logout tombstone for an hour, as
+`PostgresStore` always has, so a request racing a logout (a `Gateway` touch or token refresh) can
+no longer bring the session back. No API change; only a write-back of a just-deleted session is
+dropped.
+
 ### Fixed
 - **`MemoryStore` no longer lets a request racing a logout bring the session back.** `Delete`
   removed the session, but a request that had read it just before (the `Gateway`'s touch in the
@@ -828,7 +835,8 @@ are rejected. Confirm your Socrate server populates `aud` before enabling it in
 production. Making audience validation required-by-default is deferred to a future
 major (v2.0) and tracked separately.
 
-[Unreleased]: https://github.com/ovander/backendkit/compare/v1.26.0...HEAD
+[Unreleased]: https://github.com/ovander/backendkit/compare/v1.26.1...HEAD
+[1.26.1]: https://github.com/ovander/backendkit/compare/v1.26.0...v1.26.1
 [1.26.0]: https://github.com/ovander/backendkit/compare/v1.25.0...v1.26.0
 [1.25.0]: https://github.com/ovander/backendkit/compare/v1.24.0...v1.25.0
 [1.24.0]: https://github.com/ovander/backendkit/compare/v1.23.0...v1.24.0
