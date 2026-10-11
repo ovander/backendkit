@@ -256,7 +256,28 @@ A route group that only a service account may call (a worker API, say) also
 passes `jwtauth.RequireScopes("my-api:worker")` (backendkit v1.26.0+): a valid
 token without every listed scope gets **403** `insufficient_scope`. Socrate
 v1.14.0 or later issues such application-defined scopes (`<namespace>:<name>`)
-to the clients whose `allowed_scopes` list them.
+to the clients whose `allowed_scopes` list them, when they request them.
+
+On the calling side (backendkit later than v1.26.1):
+first register the scope in the calling client's `allowed_scopes` in Socrate
+(v1.14.0 or later), then request it with `ServiceTokenWithScopes`; the plain
+`ServiceToken` requests no scope and gets Socrate's default, `api`:
+
+```go
+tok, _, err := client.ServiceTokenWithScopes(ctx, "swingdrift:worker")
+if errors.Is(err, socrate.ErrScopeNotGranted) {
+	// invalid_scope from Socrate (scope not registered for this client), or a
+	// response granting fewer scopes than requested: fix the client in Socrate.
+}
+if err != nil {
+	return err
+}
+req.Header.Set("Authorization", "Bearer "+tok)
+```
+
+The token carries exactly the scopes requested (not `api` as well: list it
+when needed). It is cached per scope set, like `ServiceToken`'s, and
+`InvalidateServiceToken()` drops it too.
 
 Also enable `gormlogger.WithSQLRedaction()` in production so interpolated SQL
 parameter values (which may contain PII) stay out of logs. These controls landed
@@ -383,7 +404,9 @@ near-expiry) and calls Socrate as the *app itself*, no human involved. Used for
 backend-initiated actions: onboarding, magic links, background sync. `ServiceToken(ctx)` returns
 that token and its expiry, for a backend that calls another service with its own identity. If that
 service answers 401 before the token expires, call `InvalidateServiceToken()` and then
-`ServiceToken(ctx)` again: the cached token is dropped and a new one exchanged.
+`ServiceToken(ctx)` again: the cached token is dropped and a new one exchanged. For a service
+that requires a scope of its own, use `ServiceTokenWithScopes(ctx, "my-api:worker")` (see
+the route group reserved to a service account, §4).
 
 ```go
 inv, err := client.InviteUserAsService(ctx, socrate.ServiceInviteRequest{
@@ -492,7 +515,8 @@ automatically from `client_id` (cached).
 |--------|------|---------|-------|
 | `Decide(ctx, DecideRequest)` | M2M | `*Decision` | asks Socrate's policy decision point; `ErrPolicyUnavailable` on 503, with the mode kept in the `Decision`. Usually called through `pep` (§10). |
 | `ServiceToken(ctx)` | M2M | `string, time.Time` | the app's own `client_credentials` access token and its real expiry (the token's `exp`, else `expires_in` counted from the request), to call another service that accepts Socrate tokens (`sub=app:{id}`). The cached token of the service-account calls, exchanged again within 30 s of expiry; concurrent callers share one exchange. Needs `ClientSecret`. |
-| `InvalidateServiceToken()` | M2M | — | drops the cached service-account token, so the next `ServiceToken` or service-account call exchanges a new one (after a 401 for a token revoked before its `exp`). No network call; thread-safe. |
+| `ServiceTokenWithScopes(ctx, scopes...)` | M2M | `string, time.Time` | as `ServiceToken`, but requests the given scopes (`scope=` space-joined), e.g. an application-defined `swingdrift:worker` registered in the client's `allowed_scopes` (Socrate v1.14.0+). Cached per scope set (deduplicated and sorted; at most 16 sets, least recently used dropped), separately from `ServiceToken`'s token. No scope or a malformed RFC 6749 scope-token is refused without a network call. `invalid_scope`, or a response `scope` lacking a requested scope, matches `ErrScopeNotGranted` (`invalid_scope` is also an `*OAuthError`); other refusals are an `*OAuthError`. Needs `ClientSecret`. |
+| `InvalidateServiceToken()` | M2M | — | drops the cached service-account token, and every token cached by `ServiceTokenWithScopes`, so the next `ServiceToken`, `ServiceTokenWithScopes` or service-account call exchanges a new one (after a 401 for a token revoked before its `exp`). No network call; thread-safe. |
 
 #### App (client) management — Admin port · admin JWT
 
@@ -1324,7 +1348,7 @@ port (8081 in the default deployment).
 | `GetThreatMetrics` … `GetIPReputation` | `…/api/admin/security…` | JWT (admin) | Admin |
 | `GetDashboard*` / `*AdminLog*` | `…/api/admin/dashboard…`, `…/api/admin/logs…` | JWT (admin) | Admin |
 | `Decide` | `POST …/api/apps/{id}/service/policy/decide` | M2M | Admin |
-| `ServiceToken` | `POST …/oauth/token` (`client_credentials`) | client secret | OAuth |
+| `ServiceToken` / `ServiceTokenWithScopes` | `POST …/oauth/token` (`client_credentials`, with `scope` for the latter) | client secret | OAuth |
 
 ### Roles (highest → lowest privilege)
 
@@ -1381,7 +1405,9 @@ your own authorization first.
 `jwtauth.RequireScopes` and the token lacks a listed scope (the
 `WWW-Authenticate` header names them). Add the scope to the calling client's
 `allowed_scopes` in Socrate (an application-defined `<namespace>:<name>` scope
-needs Socrate v1.14.0 or later) and check the token's `scope` claim (§4).
+needs Socrate v1.14.0 or later), have the caller request it
+(`ServiceTokenWithScopes`; `ServiceToken` requests none and gets `api`) and
+check the token's `scope` claim (§4).
 
 **The BFF answers 403 on a `POST`.** The request lacks the session's CSRF
 token. Read `csrf` from your session endpoint and send it as `X-CSRF-Token` on

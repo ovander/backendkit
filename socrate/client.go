@@ -70,6 +70,12 @@ type Client struct {
 	svcTokenMu     sync.Mutex
 	svcToken       string
 	svcTokenExpiry time.Time
+
+	// Tokens of ServiceTokenWithScopes, keyed by normalised scope set; scopedMu
+	// guards the map and scopedTick (see service_token_scopes.go).
+	scopedMu   sync.Mutex
+	scoped     map[string]*scopedServiceToken
+	scopedTick uint64
 }
 
 // ClientConfig holds the constructor options for Client.
@@ -276,6 +282,11 @@ type tokenResponse struct {
 	AccessToken string `json:"access_token"`
 	ExpiresIn   int    `json:"expires_in"`
 	TokenType   string `json:"token_type"`
+	// Scope is the raw granted scope, empty when the response has no scope
+	// field (RFC 6749 §5.1: it may be omitted when identical to the requested
+	// one). Kept raw so that only ServiceTokenWithScopes, which checks it,
+	// depends on its type.
+	Scope json.RawMessage `json:"scope"`
 }
 
 // getServiceToken returns a cached service-account token, refreshing it when
@@ -291,27 +302,52 @@ func (c *Client) getServiceToken(ctx context.Context) (string, error) {
 // another service that accepts Socrate tokens. It is the same token the client's service-account
 // calls use: cached, and exchanged again only when it is missing or expires within 30 s.
 // Concurrent callers share one exchange. It requires ClientSecret; the token is never logged or
-// put in an error.
+// put in an error. It requests no scope, so Socrate issues its default (api); use
+// ServiceTokenWithScopes for a token carrying specific scopes.
 func (c *Client) ServiceToken(ctx context.Context) (token string, expiresAt time.Time, err error) {
 	c.svcTokenMu.Lock()
 	defer c.svcTokenMu.Unlock()
 
-	if c.svcToken != "" && time.Now().Add(30*time.Second).Before(c.svcTokenExpiry) {
+	if c.svcToken != "" && time.Now().Add(serviceTokenRenewBefore).Before(c.svcTokenExpiry) {
 		return c.svcToken, c.svcTokenExpiry, nil
 	}
 	if c.clientSecret == "" {
 		return "", time.Time{}, errors.New("socrate: client_secret required for service-account token exchange")
 	}
 
+	tr, expiry, err := c.exchangeClientCredentials(ctx, "", func(status int, body []byte) error {
+		return fmt.Errorf("token exchange HTTP %d: %s", status, body)
+	})
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	c.svcToken = tr.AccessToken
+	c.svcTokenExpiry = expiry
+	return c.svcToken, c.svcTokenExpiry, nil
+}
+
+// serviceTokenRenewBefore is how long before its expiry a cached
+// service-account token is exchanged again.
+const serviceTokenRenewBefore = 30 * time.Second
+
+// exchangeClientCredentials performs one client_credentials exchange at
+// /oauth/token and returns the response and the token's expiry (tokenExpiry).
+// scope is sent as the scope parameter when non-empty. A non-200 answer is
+// turned into an error by httpErr, given the status and the body (an error
+// body, never a token). The caller checks ClientSecret and owns the caching.
+func (c *Client) exchangeClientCredentials(ctx context.Context, scope string, httpErr func(status int, body []byte) error) (tokenResponse, time.Time, error) {
 	data := url.Values{
 		"grant_type":    {"client_credentials"},
 		"client_id":     {c.clientID},
 		"client_secret": {c.clientSecret},
 	}
+	if scope != "" {
+		data.Set("scope", scope)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.oauthURL("/oauth/token"), bytes.NewBufferString(data.Encode()))
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("build token request: %w", err)
+		return tokenResponse{}, time.Time{}, fmt.Errorf("build token request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	// Deliberately no ApplyClientAttribution: this is the application acting
@@ -325,26 +361,24 @@ func (c *Client) ServiceToken(ctx context.Context) (token string, expiresAt time
 	sent := time.Now()
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("token exchange: %w", err)
+		return tokenResponse{}, time.Time{}, fmt.Errorf("token exchange: %w", err)
 	}
 	b, err := readBody(resp)
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("read token response: %w", err)
+		return tokenResponse{}, time.Time{}, fmt.Errorf("read token response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", time.Time{}, fmt.Errorf("token exchange HTTP %d: %s", resp.StatusCode, b)
+		return tokenResponse{}, time.Time{}, httpErr(resp.StatusCode, b)
 	}
 
 	var tr tokenResponse
 	if err := json.Unmarshal(b, &tr); err != nil {
-		return "", time.Time{}, fmt.Errorf("decode token response: %w", err)
+		return tokenResponse{}, time.Time{}, fmt.Errorf("decode token response: %w", err)
 	}
 	if tr.AccessToken == "" {
-		return "", time.Time{}, errors.New("token exchange: no access_token in the response")
+		return tokenResponse{}, time.Time{}, errors.New("token exchange: no access_token in the response")
 	}
-	c.svcToken = tr.AccessToken
-	c.svcTokenExpiry = tokenExpiry(tr, sent)
-	return c.svcToken, c.svcTokenExpiry, nil
+	return tr, tokenExpiry(tr, sent), nil
 }
 
 // InvalidateServiceToken drops the cached service-account token, so the next
@@ -355,11 +389,20 @@ func (c *Client) ServiceToken(ctx context.Context) (token string, expiresAt time
 // finishes and its token is cached as usual. Every call drops whatever is
 // cached, including a token another goroutine has just obtained, so callers
 // refused at the same time may cause a few extra exchanges (harmless).
+//
+// It also drops every token cached by ServiceTokenWithScopes, whatever its
+// scopes: a revocation at Socrate seldom concerns a single token, and an
+// extra exchange is cheap. A scoped exchange in progress finishes and its
+// token is returned to the callers waiting for it, but not cached.
 func (c *Client) InvalidateServiceToken() {
 	c.svcTokenMu.Lock()
-	defer c.svcTokenMu.Unlock()
 	c.svcToken = ""
 	c.svcTokenExpiry = time.Time{}
+	c.svcTokenMu.Unlock()
+
+	c.scopedMu.Lock()
+	c.scoped = nil
+	c.scopedMu.Unlock()
 }
 
 // unknownTokenLifetime is how long a token whose response gives no expiry at all
