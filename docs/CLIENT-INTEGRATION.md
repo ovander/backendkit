@@ -213,8 +213,9 @@ func main() {
 
 What `auth.Handler` does on success: validates the signature and expiry, then
 populates the request context with the user's identity, role, app-roles, plan,
-and the **raw JWT** (so the `socrate.Client` can forward it). On failure it
-writes an `apierror` JSON 401 and stops the chain.
+scopes, the audiences it was accepted for, and the **raw JWT** (so the
+`socrate.Client` can forward it). On failure it writes an `apierror` JSON 401
+(403 for a missing scope, see below) and stops the chain.
 
 ### Recommended security hardening
 
@@ -251,6 +252,12 @@ r.Group(func(r chi.Router) {
 })
 ```
 
+A route group that only a service account may call (a worker API, say) also
+passes `jwtauth.RequireScopes("my-api:worker")` (backendkit v1.26.0+): a valid
+token without every listed scope gets **403** `insufficient_scope`. Socrate
+v1.14.0 or later issues such application-defined scopes (`<namespace>:<name>`)
+to the clients whose `allowed_scopes` list them.
+
 Also enable `gormlogger.WithSQLRedaction()` in production so interpolated SQL
 parameter values (which may contain PII) stay out of logs. These controls landed
 in v1.8.0 / v1.9.0; setting an empty `issuer` now also logs a startup warning.
@@ -285,10 +292,18 @@ This trips people up, so it's worth stating plainly:
 
 | Claim | In access token? | Notes |
 |-------|------------------|-------|
-| `sub`, `role`, `app_roles`, `token_version` | ✅ always | the dependable identity set |
+| `sub`, `role`, `app_roles`, `token_version` | ✅ in user tokens | the dependable identity set |
+| `aud`, `scope` | ✅ always | `aud[0]` is the client ID the token was issued to; `scope` is space-separated (`ctxutil.GetAudiences`, `ctxutil.GetScopes`) |
+| `auth_time`, `amr` | ✅ in user tokens | when and how the user signed in (`ctxutil.GetAuthTime`, `ctxutil.GetAMR`) |
 | `email`, `name` | ❌ **not** in access tokens | present in ID tokens / `userinfo` only |
 | `tenant_id` | ⚠️ only if the server is configured to issue it | else `ctxutil.GetTenantID` → `uuid.Nil`; Socrate issues it as `https://socrate/tenant_id` (see "Tenant isolation", §9) |
 | `plan` | ⚠️ only if the server is configured to issue it | else `ctxutil.GetUserPlan` → `"freemium"` |
+
+A **service account's** token (`client_credentials`) identifies the application,
+not a user: `sub` is `app:<id>` (the numeric app ID), and it carries `scope` but
+no `role`, `app_roles`, `token_version`, `auth_time` or `amr`. Its `aud` is
+`[client_id]`; since Socrate v1.13.0, with `AUDIENCE_MODE=dual`, the client's
+registered audiences follow the client ID, as in user tokens.
 
 **`role` is the user's role in the application the token was issued for**, not in yours.
 All applications on one Socrate share its signing keys, so without
@@ -595,23 +610,17 @@ A minimal BFF with the `bff` package and `socrate.Client`:
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/ovander/backendkit/bff"
 	"github.com/ovander/backendkit/socrate"
 )
-
-// pendingLogin is what the BFF remembers between /bff/login and /bff/callback.
-type pendingLogin struct {
-	Verifier, Nonce, ReturnTo string
-	Expires                   time.Time
-}
 
 func main() {
 	const socrateURL = "https://socrate.example.com"
@@ -628,34 +637,36 @@ func main() {
 	}
 
 	store := bff.NewMemoryStore(30*time.Minute, 8*time.Hour) // idle, absolute
+	// What the BFF remembers between /bff/login and /bff/callback, under the state:
+	// the PKCE verifier, the LoginBinding nonce and the return path. Behind several
+	// instances, use bff.NewPostgresPendingLoginStore instead.
+	pending := bff.NewMemoryPendingLoginStore(bff.DefaultPendingLoginTTL, bff.DefaultMaxPendingLogins)
 	go func() {
 		for range time.Tick(time.Minute) {
 			store.Sweep()
+			pending.Sweep(context.Background())
 		}
 	}()
 
 	gw := &bff.Gateway{ // use by pointer; never copy
 		Store:     store,
 		Cookie:    bff.CookieConfig{Name: "app_session", Secure: true}, // sent as __Host-app_session
-		Refresher: client,                                             // *socrate.Client refreshes tokens
+		Refresher: client,                                              // *socrate.Client refreshes tokens
 	}
 	login := bff.LoginBinding{Cookie: bff.CookieConfig{Name: "app_login", Secure: true}}
-
-	var mu sync.Mutex
-	pending := map[string]pendingLogin{} // keyed by state; use a shared store with several instances
 
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /bff/login", func(w http.ResponseWriter, r *http.Request) {
 		p, state := bff.NewPKCE(), bff.RandomToken(32)
-		mu.Lock()
-		pending[state] = pendingLogin{
+		if err := pending.Put(r.Context(), state, bff.PendingLogin{
 			Verifier: p.Verifier,
 			Nonce:    login.Begin(w), // ties the callback to this browser
 			ReturnTo: bff.SanitizeReturnTo(r.URL.Query().Get("return_to")),
-			Expires:  time.Now().Add(bff.DefaultLoginBindingTTL),
+		}); err != nil { // bff.ErrPendingLoginsFull: the store is bounded
+			http.Error(w, "try again later", http.StatusServiceUnavailable)
+			return
 		}
-		mu.Unlock()
 		q := url.Values{
 			"response_type": {"code"}, "client_id": {os.Getenv("SOCRATE_CLIENT_ID")},
 			"redirect_uri": {redirectURI}, "scope": {"openid profile email"}, "state": {state},
@@ -665,12 +676,8 @@ func main() {
 	})
 
 	mux.HandleFunc("GET /bff/callback", func(w http.ResponseWriter, r *http.Request) {
-		state := r.URL.Query().Get("state")
-		mu.Lock()
-		st, ok := pending[state]
-		delete(pending, state) // single use
-		mu.Unlock()
-		if !ok || time.Now().After(st.Expires) || !login.Verify(w, r, st.Nonce) {
+		st, ok := pending.Take(r.Context(), r.URL.Query().Get("state")) // single use; expired ⇒ !ok
+		if !ok || !login.Verify(w, r, st.Nonce) {
 			http.Error(w, "invalid login", http.StatusBadRequest)
 			return
 		}
@@ -733,7 +740,7 @@ shared by several instances (README). Create its table in your migrations and pa
 `bff.WithPostgresManagedSchema()`: the store then runs no DDL and its role needs only `SELECT`,
 `INSERT`, `UPDATE` and `DELETE` (`bff.WithPostgresAutoSchema()` creates the table instead; with
 neither, it does so with a warning). With more than one instance, also keep the pending logins in a
-shared store, `bff.NewPostgresPendingLoginStore`.
+shared store, `bff.NewPostgresPendingLoginStore` (same options, `WithPendingLoginManagedSchema()`).
 [`oauth2-admin/bff`](https://github.com/ovander/oauth2-admin/tree/main/bff)
 is a complete BFF built this way, with logout and token revocation.
 
@@ -1004,7 +1011,8 @@ if err != nil {
 	return err          // a real failure
 }
 if user == nil {
-	return apierror.NotFound("user", id).WriteJSON(w) // 404, cleanly
+	apierror.NotFound("user", id).WriteJSON(w) // 404, cleanly
+	return nil
 }
 ```
 
@@ -1028,8 +1036,13 @@ apierror.BadRequest("invalid role").
 ```
 
 Constructors: `NotFound`, `ValidationError`, `BadRequest`, `Unauthorized`,
-`Forbidden`, `Conflict`, `Internal`, `ServiceUnavailable`. `jwtauth.Middleware`
-already emits `Unauthorized` for bad tokens in this exact shape.
+`Forbidden`, `Conflict`, `TooManyRequests`, `Internal`, `BadGateway`,
+`ServiceUnavailable`, and `New(status, msg)` for any status. `jwtauth.Middleware`
+already emits `Unauthorized` for bad tokens in this exact shape. An API that
+answers in RFC 9457 problem details uses `WriteProblem` instead of `WriteJSON`,
+and passes `apierror.ProblemWriter` to `jwtauth.WithErrorWriter` and
+`httpware.RequireTenantWith` so its middleware answers the same way (README,
+[`apierror`](../README.md#apierror)).
 
 > **Frontend note — 5xx responses (since v1.9.0).** For **server errors (≥ 500)**,
 > `WriteJSON` replaces `message` with a generic status text and omits `details`,
@@ -1343,7 +1356,8 @@ issue a `plan` claim. Either configure the server to emit it, or resolve the
 plan from your own database after identifying the user by `sub`.
 
 **Frontend gets 401 from my backend but the token "looks valid".** Common
-causes: wrong `SOCRATE_ISSUER` (issuer mismatch), clock skew (expired), or the
+causes: wrong `SOCRATE_ISSUER` (issuer mismatch), clock skew (expired), an
+`aud` without the `WithAudience` value (a token issued to another client), or the
 JWKS URL pointing at the wrong environment. Check `jwtauth` logs — it logs the
 validation failure reason.
 
@@ -1362,6 +1376,12 @@ longer symptom index.
 (8081 in the default deployment).
 Proxy every admin/user-management action through your backend so you can apply
 your own authorization first.
+
+**A service account gets 403 `insufficient_scope`.** The route group has
+`jwtauth.RequireScopes` and the token lacks a listed scope (the
+`WWW-Authenticate` header names them). Add the scope to the calling client's
+`allowed_scopes` in Socrate (an application-defined `<namespace>:<name>` scope
+needs Socrate v1.14.0 or later) and check the token's `scope` claim (§4).
 
 **The BFF answers 403 on a `POST`.** The request lacks the session's CSRF
 token. Read `csrf` from your session endpoint and send it as `X-CSRF-Token` on

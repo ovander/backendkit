@@ -32,7 +32,7 @@ var ErrPendingLoginsFull = errors.New("bff: too many pending logins")
 type PendingLogin struct {
 	Verifier string    `json:"verifier"`
 	Nonce    string    `json:"nonce"`     // the LoginBinding nonce
-	ReturnTo string    `json:"return_to"` // already validated (see SafeRedirect)
+	ReturnTo string    `json:"return_to"` // already validated (see SanitizeReturnTo)
 	Created  time.Time `json:"created"`
 }
 

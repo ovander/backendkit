@@ -37,7 +37,10 @@ go test ./...
 
 ## Tests and checks
 
-Run these before opening a pull request; CI runs the same and all of them are required:
+Run these before opening a pull request. CI runs the same in the jobs **Build & Test
+(toolchain)** (Go 1.27.2) and **Build & Test (floor)** (Go 1.26.0, the `go` line), which check
+`go.sum`, build, test and vet, plus **golangci-lint** and **govulncheck**; all of them are
+required:
 
 ```bash
 go mod tidy && git diff --exit-code go.sum
