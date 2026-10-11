@@ -43,7 +43,7 @@ type PostgresStore struct {
 }
 
 // PostgresStoreTombstoneTTL is how long Delete keeps a tombstone that stops a
-// racing Put from re-creating a deleted session.
+// racing Put from re-creating a deleted session. MemoryStore uses it too.
 const PostgresStoreTombstoneTTL = time.Hour
 
 // postgresStoreOpTimeout bounds each statement: the SessionStore interface

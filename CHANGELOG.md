@@ -6,6 +6,16 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Fixed
+- **`MemoryStore` no longer lets a request racing a logout bring the session back.** `Delete`
+  removed the session, but a request that had read it just before (the `Gateway`'s touch in the
+  proxy, or a token refresh writing the rotated tokens back) then called `Put` and re-inserted it,
+  with tokens the logout had just revoked. `Delete` now keeps a tombstone for
+  `PostgresStoreTombstoneTTL` (an hour), as `PostgresStore` always has, and `Put` ignores a
+  tombstoned session; `Sweep` drops tombstones older than that. Session IDs are random per sign-in,
+  so only a write-back of the deleted session is affected. Found while moving the monitoring
+  console to backendkit's stores.
+
 ## [1.26.0] - 2026-10-11
 
 Minor release on the **v1** line: additive API only. `jwtauth` exposes a token's scopes and can

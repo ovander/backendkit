@@ -113,6 +113,88 @@ func TestMemoryStoreExpiry(t *testing.T) {
 	}
 }
 
+// A request in flight during a logout (a Gateway touch or refresh writing the
+// session back) must not re-create it: Delete leaves a tombstone that Put
+// respects until Sweep drops it after PostgresStoreTombstoneTTL.
+func TestMemoryStoreDeleteKeepsTombstone(t *testing.T) {
+	base := time.Now()
+	now := base
+	st := NewMemoryStore(0, 0)
+	st.now = func() time.Time { return now }
+
+	s := NewSession("sid", "csrf", tokenSet("at", "rt", 300), UserInfo{Sub: "u1"}, now)
+	st.Put(s)
+	st.Delete("sid")
+	st.Put(s) // the racing write-back
+	if _, ok := st.Get("sid"); ok {
+		t.Fatal("a Put after Delete re-created the session")
+	}
+
+	// Other sessions are unaffected.
+	st.Put(NewSession("other", "csrf", tokenSet("at", "rt", 300), UserInfo{}, now))
+	if _, ok := st.Get("other"); !ok {
+		t.Fatal("an unrelated session was refused")
+	}
+
+	// The tombstone survives a sweep within the TTL…
+	now = base.Add(PostgresStoreTombstoneTTL - time.Minute)
+	st.Sweep()
+	st.Put(s)
+	if _, ok := st.Get("sid"); ok {
+		t.Fatal("the tombstone was swept before PostgresStoreTombstoneTTL")
+	}
+	// …and is dropped after it, so the map does not grow without bound.
+	now = base.Add(PostgresStoreTombstoneTTL + time.Minute)
+	st.Sweep()
+	if _, ok := st.tombstones["sid"]; ok {
+		t.Fatal("Sweep kept a tombstone older than PostgresStoreTombstoneTTL")
+	}
+}
+
+// An expired session read by Get is deleted, and so tombstoned too: a stale
+// write-back cannot revive it.
+func TestMemoryStoreExpiredGetIsTombstoned(t *testing.T) {
+	base := time.Now()
+	now := base
+	st := NewMemoryStore(30*time.Minute, 0)
+	st.now = func() time.Time { return now }
+	s := NewSession("sid", "csrf", tokenSet("at", "rt", 300), UserInfo{}, now)
+	st.Put(s)
+	now = base.Add(31 * time.Minute)
+	if _, ok := st.Get("sid"); ok {
+		t.Fatal("session should be idle-expired")
+	}
+	s.Touch(now)
+	st.Put(s)
+	if _, ok := st.Get("sid"); ok {
+		t.Fatal("a touched write-back revived an expired session")
+	}
+}
+
+// Concurrent Put, Get and Delete on one id stay consistent under -race, and
+// once Delete has returned no Put brings the session back.
+func TestMemoryStoreConcurrentLogout(t *testing.T) {
+	st := NewMemoryStore(0, 0)
+	s := NewSession("sid", "csrf", tokenSet("at", "rt", 300), UserInfo{}, time.Now())
+	st.Put(s)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				st.Put(s)
+				st.Get("sid")
+			}
+		}()
+	}
+	st.Delete("sid")
+	wg.Wait()
+	if _, ok := st.Get("sid"); ok {
+		t.Fatal("a Put racing the logout re-created the session")
+	}
+}
+
 func TestMemoryStoreAbsoluteExpiry(t *testing.T) {
 	base := time.Now()
 	now := base

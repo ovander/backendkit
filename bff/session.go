@@ -237,22 +237,29 @@ type SessionStore interface {
 
 // MemoryStore is a mutex-guarded in-memory SessionStore. Expiry is a sliding
 // idle window OR an absolute lifetime, enforced lazily on Get and by Sweep.
+//
+// Delete keeps a tombstone for PostgresStoreTombstoneTTL, as PostgresStore
+// does, so a request that was in flight during a logout (a Gateway touch or
+// token refresh writing the session back) cannot bring the session back with
+// a later Put.
 type MemoryStore struct {
-	mu       sync.RWMutex
-	sessions map[string]*Session
-	idle     time.Duration
-	absolute time.Duration
-	now      func() time.Time
+	mu         sync.RWMutex
+	sessions   map[string]*Session
+	tombstones map[string]time.Time // id -> when Delete removed it
+	idle       time.Duration
+	absolute   time.Duration
+	now        func() time.Time
 }
 
 // NewMemoryStore builds a store with the given idle and absolute lifetimes. A
 // zero duration disables that bound.
 func NewMemoryStore(idle, absolute time.Duration) *MemoryStore {
 	return &MemoryStore{
-		sessions: make(map[string]*Session),
-		idle:     idle,
-		absolute: absolute,
-		now:      time.Now,
+		sessions:   make(map[string]*Session),
+		tombstones: make(map[string]time.Time),
+		idle:       idle,
+		absolute:   absolute,
+		now:        time.Now,
 	}
 }
 
@@ -286,27 +293,40 @@ func (m *MemoryStore) Get(id string) (*Session, bool) {
 	return s, true
 }
 
-// Put stores or replaces a session.
+// Put stores or replaces a session. It never revives a session Delete removed
+// less than PostgresStoreTombstoneTTL ago: that write is dropped.
 func (m *MemoryStore) Put(s *Session) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, gone := m.tombstones[s.id]; gone {
+		return
+	}
 	m.sessions[s.id] = s
-	m.mu.Unlock()
 }
 
-// Delete removes a session.
+// Delete removes a session and keeps a tombstone for PostgresStoreTombstoneTTL,
+// so a later Put of the same session is ignored.
 func (m *MemoryStore) Delete(id string) {
 	m.mu.Lock()
 	delete(m.sessions, id)
+	m.tombstones[id] = m.now()
 	m.mu.Unlock()
 }
 
-// Sweep removes all expired sessions.
+// Sweep removes all expired sessions and the tombstones older than
+// PostgresStoreTombstoneTTL.
 func (m *MemoryStore) Sweep() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for id, s := range m.sessions {
 		if m.expired(s) {
 			delete(m.sessions, id)
+		}
+	}
+	cutoff := m.now().Add(-PostgresStoreTombstoneTTL)
+	for id, at := range m.tombstones {
+		if at.Before(cutoff) {
+			delete(m.tombstones, id)
 		}
 	}
 }
