@@ -752,8 +752,8 @@ store, err := bff.NewPostgresStore(ctx, db, key, 30*time.Minute, 8*time.Hour, bf
 
 The session data, tokens included, is encrypted with AES-256-GCM under that key, bound to the
 session ID; changing the key signs everyone out. A logout wipes the data and keeps a tombstone
-for an hour, so a request racing it cannot bring the session back. Expiry is the same as
-`MemoryStore`; call `Sweep` on a ticker. Statement errors read as "no session" and go to the error
+for an hour, so a request racing it cannot bring the session back (`MemoryStore` does the same).
+Expiry is the same as `MemoryStore`; call `Sweep` on a ticker. Statement errors read as "no session" and go to the error
 handler (`WithPostgresErrorHandler`; default: the standard logger). For another database,
 implement `SessionStore` (`Get`, `Put`, `Delete`, `Sweep`) with `Session.Snapshot` /
 `NewSessionFromSnapshot`. A `Gateway` must be used by pointer and never copied.
