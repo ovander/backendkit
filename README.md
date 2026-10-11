@@ -74,11 +74,11 @@ backendkit puts that foundation in one versioned dependency:
 
 | Package | Purpose |
 |---------|---------|
-| [`apierror`](#apierror) | Structured HTTP error types (`AppError`, constructor functions) |
-| [`ctxutil`](#ctxutil) | Typed context keys for Socrate claims (tenant, user, role, plan, logger, request-id) |
-| [`httpware`](#httpware) | Chi-compatible middlewares: RequestID, Logger, SecurityHeaders, BodyLimit, Recover, Timeout, RateLimiter, KeyedRateLimiter, RequireTenant, RBAC, Metrics (Prometheus RED) |
+| [`apierror`](#apierror) | Structured HTTP error types (`AppError`, constructor functions), written as a JSON envelope or RFC 9457 problem details (`ErrorWriter`) |
+| [`ctxutil`](#ctxutil) | Typed context keys for Socrate claims (tenant, user, role, app roles, plan, scopes, audiences, authentication facts, logger, request-id) |
+| [`httpware`](#httpware) | Chi-compatible middlewares: RequestID, Logger, SecurityHeaders, BodyLimit, Recover, Timeout, RateLimiter, KeyedRateLimiter, RequireTenant / RequireTenantWith, RBAC, Metrics (Prometheus RED) |
 | [`gormlogger`](#gormlogger) | GORM → logrus bridge with slow-query detection |
-| [`jwtauth`](#jwtauth) | JWT RS256 validation middleware with JWKS cache and stale-key fallback |
+| [`jwtauth`](#jwtauth) | JWT RS256 validation middleware with JWKS cache and stale-key fallback; opt-in audience, scope, revocation and namespaced tenant-claim checks |
 | [`bff`](#bff) | Backend-for-Frontend runtime: server-side sessions, `__Host-` cookies, CSRF, PKCE, login binding and a fail-closed session→bearer proxy with coalesced token refresh |
 | [`socrate`](#socrate) | Socrate API client: token flows, user CRUD, service-account token, magic links, invites, app and superadmin management, security monitoring, dashboard, audit logs, policy decisions |
 | [`tiering`](#tiering) | Plan registry, tier gate middleware, feature policy model and service |
@@ -104,9 +104,11 @@ to Socrate (`bff`, `pep`) and `ailang` for `aigateway`.
 | Read the tenant / user / role / plan of the current request | [`ctxutil`](#ctxutil) |
 | Add request IDs, structured logging, panic recovery, timeouts, body limits, security headers | [`httpware`](#httpware) |
 | Rate-limit per tenant | [`httpware.RateLimiter`](#httpware) |
+| Rate-limit every request (tenant, else subject, else client address) | [`httpware.KeyedRateLimiter`](#httpware) |
 | Expose Prometheus RED metrics keyed by route pattern (same metric scheme as Socrate) | [`httpware.Metrics`](#httpware) + `httpware.MetricsHandler` |
 | Guarantee a tenant on tenant-scoped routes | [`httpware.RequireTenant`](#httpware) |
 | Gate routes by role/permission | [`httpware.RBAC`](#httpware) |
+| Reserve a route group to a service account by OAuth scope | [`jwtauth.RequireScopes`](#jwtauth) |
 | Gate routes or features by commercial plan | [`tiering`](#tiering) |
 | Return consistent JSON errors | [`apierror`](#apierror) |
 | Call Socrate to manage users, apps, tokens, or security | [`socrate`](#socrate) |
@@ -296,7 +298,7 @@ API, the packages sit in three layers:
 │ Timeout → jwtauth → RateLimiter                                     │
 └──────────────────────────────────┬──────────────────────────────────┘
                                    │ context carries: sub, role, app roles, plan,
-                                   │ tenant, auth_time, amr, request id, logger
+                                   │ tenant, scopes, aud, auth_time, amr, request id, logger
                                    ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │ Route handlers                                                      │
@@ -436,7 +438,7 @@ with any `net/http`-based router.
 | Per-route timeout | `httpware.Timeout(d)` |
 | Per-tenant rate limit | `httpware.NewRateLimiter(rps, burst)` — mount `rl.Handler`, call `rl.Stop()` on shutdown; requests without a tenant pass unlimited |
 | Keyed rate limit (no request unlimited) | `httpware.NewKeyedRateLimiter(cfg)` — tenant, else subject, else client address in a smaller anonymous bucket (IPv6 by /64, bounded by `MaxAnonymousKeys`); real `Retry-After`. Pass a trusted-proxy-aware `ClientIP` behind a proxy |
-| Require a tenant | `httpware.RequireTenant` — 401 when no tenant is in context |
+| Require a tenant | `httpware.RequireTenant` — 401 when no tenant is in context; `httpware.RequireTenantWith(write)` writes it with another `apierror.ErrorWriter` |
 | Role-based access | `httpware.NewRBAC(roleMap, entry)` |
 | Prometheus RED metrics | `httpware.Metrics(service)` — mount first; `httpware.MetricsHandler()` serves the exposition |
 
@@ -675,7 +677,12 @@ auth := jwtauth.New(jwksURL, issuer, logger,
   scopes) through the configured error writer. Use it on the route group of a service account,
   e.g. `jwtauth.New(jwksURL, issuer, log, jwtauth.WithAudience("my-api"), jwtauth.RequireScopes("my-api:worker"))`.
   Called with no non-empty scope it rejects every token (fail closed). Without `RequireScopes`, a
-  malformed `scope`/`scp` claim is ignored, so existing callers see no change.
+  malformed `scope`/`scp` claim is ignored, so existing callers see no change. Socrate v1.14.0
+  or later issues application-defined scopes such as `my-api:worker` (`<namespace>:<name>`) to
+  the clients whose `allowed_scopes` list them, on every grant. A service account's
+  (`client_credentials`) token has `sub` = `app:<id>`, no `role` or `app_roles`, and `aud`
+  starting with its own client ID; since Socrate v1.13.0, with `AUDIENCE_MODE=dual`, its
+  registered audiences follow, as for user tokens.
 - **Tenant claim.** The tenant is read from `tenant_id` by default. A stock Socrate has no tenant
   model: a tenant reaches tokens only through a client's claim mapping
   (`"tenant_id": "user.attributes.tenant_id"`), under Socrate's claims namespace, as
@@ -704,7 +711,7 @@ store := bff.NewMemoryStore(30*time.Minute, 8*time.Hour) // idle, absolute; call
 gw := &bff.Gateway{
 	Store:     store,
 	Cookie:    bff.CookieConfig{Name: "app_session", Secure: true}, // sent as __Host-app_session
-	Refresher: client,                                             // *socrate.Client refreshes the tokens
+	Refresher: client,                                              // *socrate.Client refreshes the tokens
 }
 
 // Every API call: session cookie in, bearer out. No valid session ⇒ 401, never a pass-through.
@@ -1045,10 +1052,12 @@ r.Get("/api/v1/version", buildinfo.Handler())
 
 // Or read the struct directly (adds GoVersion from runtime.Version()):
 info := buildinfo.Get()
-// {"version":"v1.2.3","buildTime":"...","gitCommit":"a1b2c3d","goVersion":"go1.25"}
+// {"version":"v1.2.3","buildTime":"...","gitCommit":"a1b2c3d","goVersion":"go1.27.2"}
 ```
 
 Full API: [pkg.go.dev/…/buildinfo](https://pkg.go.dev/github.com/ovander/backendkit/buildinfo).
+
+---
 
 ### conformance
 
@@ -1183,6 +1192,7 @@ scripts/conformance-local.sh
 | **Service-account call errors with "AppID must be set"** | Set `AppID` in `ClientConfig` (`SOCRATE_APP_ID`). The `/api/admin/apps` lookup needs a human-admin JWT, so a service token cannot resolve the app ID at runtime. |
 | **Rate limiter never limits** | `RateLimiter` keys on the tenant UUID and lets requests through when none is present. Place `rl.Handler` **after** `auth.Handler` so `tenant_id` is already in context. |
 | **`tiering.Gate` always allows / always denies** | The gate reads the plan from context (`ctxutil.GetUserPlan`); confirm auth runs before the gate and that your `PlanRegistry` contains the plan names you check. Unknown plans normalise to the lowest tier. |
+| **`403 insufficient_scope` from `jwtauth`** | The middleware has `RequireScopes` and the token lacks one of the scopes (the `WWW-Authenticate` header names them). Grant the scope to the calling client in Socrate (`allowed_scopes`; an application-defined `<namespace>:<name>` scope needs Socrate v1.14.0 or later), then check that the token's `scope` claim carries it. |
 | **BFF answers 403 on `POST`/`PUT`/`DELETE`** | The request lacks the session's CSRF token in `X-CSRF-Token`. Give the SPA the token (for example in your `/bff/session` response) and send it on every unsafe request. |
 | **Every `pep` check answers 401** | `pep` runs before `jwtauth`, so there is no user token in context. Mount `auth.Handler` first. |
 | **`pep` answers `503 policy_unavailable` at startup** | Socrate's decision point was unreachable before any decision told the process the mode. Check `SOCRATE_BASE_URL`, `SOCRATE_CLIENT_SECRET` and `SOCRATE_APP_ID`; set `FailOpenWhenModeUnknown` only if proceeding is acceptable while the mode is unknown. |

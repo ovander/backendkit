@@ -23,6 +23,16 @@ dropped.
   so only a write-back of the deleted session is affected. Found while moving the monitoring
   console to backendkit's stores.
 
+### Changed
+- Docs: the README, `docs/CLIENT-INTEGRATION.md`, `docs/MIGRATING-TO-SOCRATE.md` and
+  `CONTRIBUTING.md` follow the current code and Socrate v1.14: what a service account's
+  (`client_credentials`) token carries (`sub` = `app:<id>`, `scope`, `aud` under
+  `AUDIENCE_MODE=dual` since Socrate v1.13.0), `RequireScopes` with application-defined scopes
+  (Socrate v1.14.0 or later), `RequireTenantWith`, `KeyedRateLimiter` and problem details in the
+  package tables, the BFF example on `bff.PendingLoginStore`, a non-compiling `apierror` snippet
+  fixed, the CI job names, and a `bff.PendingLogin` doc comment that named a non-existent
+  `SafeRedirect` (it is `SanitizeReturnTo`).
+
 ## [1.26.0] - 2026-10-11
 
 Minor release on the **v1** line: additive API only. `jwtauth` exposes a token's scopes and can

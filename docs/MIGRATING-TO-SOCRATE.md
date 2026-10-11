@@ -85,6 +85,11 @@ app the token was issued for**.
 - `app_roles` maps every app's client ID to the user's role in it; `ctxutil.GetAppRole(ctx,
   clientID)` reads yours. Socrate admins and superadmins never appear in `app_roles`: they get
   `role: "admin"` on every application through their global role.
+- A service account calling your API (`client_credentials`) has `sub` = `app:<id>`, no `role` and
+  no `app_roles`; its `aud` starts with its own client ID, followed under `AUDIENCE_MODE=dual` by
+  its registered audiences (Socrate v1.13.0 or later). To reserve a route group to it, require a
+  scope of your own with `jwtauth.RequireScopes("my-api:worker")` (backendkit v1.26.0), granted to
+  that client in its `allowed_scopes` (application-defined scopes need Socrate v1.14.0).
 
 ### 3.2 Configure the app ID
 
