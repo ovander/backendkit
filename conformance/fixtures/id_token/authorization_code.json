@@ -1,0 +1,25 @@
+{
+  "acr": "pwd",
+  "amr": [
+    "pwd"
+  ],
+  "app_roles": "<app_roles>",
+  "at_hash": "<at_hash>",
+  "aud": [
+    "<client_id>"
+  ],
+  "auth_time": "<auth_time>",
+  "email": "<email>",
+  "email_verified": true,
+  "exp": "<exp>",
+  "iat": "<iat>",
+  "iss": "<issuer>",
+  "jti": "<jti>",
+  "name": "<name>",
+  "nbf": "<nbf>",
+  "nonce": "<nonce>",
+  "preferred_username": "<email>",
+  "role": "<role>",
+  "sub": "<sub>",
+  "type": "id_token"
+}

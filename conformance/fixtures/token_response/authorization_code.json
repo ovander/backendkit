@@ -1,0 +1,12 @@
+{
+  "access_token": "<access_token>",
+  "app_roles": "<app_roles>",
+  "expires_in": "<expires_in>",
+  "id_token": "<id_token>",
+  "refresh_token": "<refresh_token>",
+  "roles": [
+    "<role>"
+  ],
+  "scope": "<scope:openid profile email>",
+  "token_type": "Bearer"
+}

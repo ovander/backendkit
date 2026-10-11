@@ -49,6 +49,14 @@ govulncheck ./...
 ```
 
 - Tests sit next to the code (`*_test.go`), table-driven.
+- Live tests against a real Socrate sit in `*_conformance_test.go` files behind the `conformance`
+  build tag, named `TestConformance…`, and import only what their package already may. They are
+  not part of the required checks: the **Conformance** workflow runs them nightly (and on a pull
+  request that touches them) against Socrate built from `ovander/go-oauth2` `main`, and opens an
+  issue labelled `conformance` when they fail. Run them locally with
+  `scripts/conformance-local.sh` (it needs a scratch PostgreSQL database and a go-oauth2
+  checkout), and check they still build with `go vet -tags conformance ./...`. When Socrate
+  changes a shape on purpose, update `conformance/fixtures` in the same pull request.
 - Do not weaken a check to get green: no skipped or deleted tests, and no `//nolint` or `t.Skip`
   without a one-line reason.
 

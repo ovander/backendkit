@@ -49,6 +49,7 @@ It is written for two audiences working on the same product:
 - [11. Recipes](#11-recipes)
 - [12. Quick reference](#12-quick-reference)
 - [13. Gotchas & FAQ](#13-gotchas--faq)
+- [14. Testing against Socrate](#14-testing-against-socrate)
 
 ---
 
@@ -1371,6 +1372,83 @@ user token in context. Mount `auth.Handler` first (§10).
 
 **Is the client safe to share across goroutines?** Yes. Construct one at startup
 and reuse it; the service-account token cache is mutex-guarded.
+
+## 14. Testing against Socrate
+
+Your tests should not need a running Socrate, but the Socrate they fake must be the real one.
+A mock written from memory drifts: `aud` as a string instead of an array, a `sub` that is a UUID
+instead of the numeric user id, a `tenant_id` without its `https://socrate/` namespace, a
+`client_credentials` token carrying a `role` Socrate never puts there. Such differences pass every
+test and break in production.
+
+The [`conformance`](../README.md#conformance) package holds what Socrate really issues, as
+fixtures: the claim sets of its tokens (authorization code with and without MFA, refresh,
+`client_credentials`, `AUDIENCE_MODE=dual`, claim-mapped custom claims, DPoP-bound), its token,
+userinfo and introspection responses, and its discovery and JWKS documents. A nightly backendkit
+workflow checks every fixture against a Socrate built from `ovander/go-oauth2` `main`, so when the
+server changes, the fixtures change with it and your mock follows on the next backendkit upgrade.
+
+Build the mock from the fixtures instead of hand-writing claims:
+
+```go
+func newSocrateMock(t *testing.T) (*httptest.Server, conformance.Key) {
+	t.Helper()
+	key, err := conformance.NewKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	serve := func(doc map[string]any) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(doc)
+		}
+	}
+	jwks, _ := conformance.JWKS(key)
+	disc, _ := conformance.Discovery(srv.URL)
+	mux.Handle("GET /.well-known/jwks.json", serve(jwks))
+	mux.Handle("GET /.well-known/openid-configuration", serve(disc))
+	return srv, key
+}
+
+func TestInvoices(t *testing.T) {
+	socrate, key := newSocrateMock(t)
+	// Users sign in to "invoices"; with AUDIENCE_MODE=off a calling service's
+	// token carries its own client_id, so the API lists each caller too.
+	auth := jwtauth.New(socrate.URL+"/.well-known/jwks.json", socrate.URL, logger,
+		jwtauth.WithAudiences("invoices", "billing-worker"),
+		jwtauth.WithTenantClaim("https://socrate/tenant_id"))
+
+	// A user of the tenant, exactly as Socrate would sign them in…
+	user, _ := conformance.Sign("access/custom_claims", conformance.Params{
+		Issuer: socrate.URL, ClientID: "invoices", Subject: "42", Role: "editor",
+		TenantID: "5b0c7a52-3e0c-4d2a-9f8e-0d6f1a2b3c4d",
+	}, key)
+	// …and the calling service, sub "app:12", aud ["billing-worker"].
+	worker, _ := conformance.Sign("access/client_credentials", conformance.Params{
+		Issuer: socrate.URL, ClientID: "billing-worker", AppID: 12,
+	}, key)
+	// serve requests with "Authorization: Bearer "+user / worker through auth.Handler …
+}
+```
+
+- `conformance.Names()` lists every fixture; `Load(name, params)` returns one as a map you may
+  extend, `Sign` returns a token fixture as a signed JWS. Unset `Params` fields get documented
+  defaults (`Default…` constants), times start at `time.Now()`.
+- If you keep a hand-written mock (an HTTP stub of `/oauth/token`, `/oauth/userinfo`,
+  `/oauth/introspect`), assert its output with `conformance.Match("token_response/authorization_code",
+  body, conformance.Params{})` and friends: it fails on a missing or extra key or a value of the
+  wrong shape.
+- Pick the fixture for your server's settings: `access/audience_dual` only applies with
+  `AUDIENCE_MODE=dual` and a registered audience, the `custom_claims` fixtures only to a client with
+  claim mappings, `discovery_dpop` only with DPoP enabled.
+
+To test your service against a real Socrate instead, do what backendkit's suite does:
+`scripts/conformance-local.sh` (in this repository) builds Socrate from a checkout, starts it on a
+scratch PostgreSQL database, seeds clients and users from `conformance/testdata/socrate-seed`, and
+runs the tests behind the `conformance` build tag.
 
 ---
 
