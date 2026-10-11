@@ -6,6 +6,16 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+## [1.26.0] - 2026-10-11
+
+Minor release on the **v1** line: additive API only. `jwtauth` exposes a token's scopes and can
+require them (`RequireScopes`, answering 403 `insufficient_scope`), for routes reserved to one
+service account. The new `conformance` package gives Socrate mocks the claim sets and documents
+Socrate really issues, checked nightly against a live Socrate. `WithPendingLoginManagedSchema` now
+also checks the `UPDATE` privilege its `Put` needs. No changed signature and no changed default; a
+role without `UPDATE` on a managed pending-login table, which could not sign anyone in, is now
+refused at start-up.
+
 ### Added
 - **`jwtauth.RequireScopes`, `SocrateClaims.Scopes()` and `ctxutil.GetScopes`: authorise by OAuth
   scope** (#116). The middleware reads the token's scopes from the space-separated `scope` claim
@@ -808,7 +818,8 @@ are rejected. Confirm your Socrate server populates `aud` before enabling it in
 production. Making audience validation required-by-default is deferred to a future
 major (v2.0) and tracked separately.
 
-[Unreleased]: https://github.com/ovander/backendkit/compare/v1.25.0...HEAD
+[Unreleased]: https://github.com/ovander/backendkit/compare/v1.26.0...HEAD
+[1.26.0]: https://github.com/ovander/backendkit/compare/v1.25.0...v1.26.0
 [1.25.0]: https://github.com/ovander/backendkit/compare/v1.24.0...v1.25.0
 [1.24.0]: https://github.com/ovander/backendkit/compare/v1.23.0...v1.24.0
 [1.23.0]: https://github.com/ovander/backendkit/compare/v1.22.0...v1.23.0
