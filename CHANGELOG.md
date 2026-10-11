@@ -6,6 +6,19 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Added
+- **`socrate.Client.ServiceTokenWithScopes` and `socrate.ErrScopeNotGranted`: a service-account
+  token carrying given scopes.** `ServiceToken` requests no scope, so Socrate issues its default
+  (`api`) and a service could not obtain an application-defined scope (`swingdrift:worker`,
+  Socrate v1.14.0 or later) that a peer requires with `jwtauth.RequireScopes`.
+  `ServiceTokenWithScopes(ctx, scopes...)` sends them as `scope`, with `ServiceToken`'s contract
+  (cached, renewed within 30 s of expiry, one shared exchange, needs `ClientSecret`, token never
+  in an error). The cache is per scope set (deduplicated and sorted, at most 16 sets, least
+  recently used evicted) and separate from `ServiceToken`'s, which is unchanged. No scope or a
+  malformed RFC 6749 scope-token is refused without a request. `invalid_scope` from Socrate, or a
+  response `scope` lacking a requested scope, matches `ErrScopeNotGranted` (`invalid_scope` is
+  also an `*OAuthError`). `InvalidateServiceToken` now also drops the scoped tokens.
+
 ### Changed
 - Docs: the README, `docs/CLIENT-INTEGRATION.md`, `docs/MIGRATING-TO-SOCRATE.md` and
   `CONTRIBUTING.md` follow the current code and Socrate v1.14: what a service account's

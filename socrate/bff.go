@@ -54,6 +54,23 @@ func (e *OAuthError) Error() string {
 	return fmt.Sprintf("token endpoint HTTP %d: %s", e.StatusCode, e.Description)
 }
 
+// newOAuthError builds the *OAuthError of a non-2xx /oauth/token answer with
+// status and body b: the RFC 6749 §5.2 error and error_description when b is
+// such a body, else b itself as the Description.
+func newOAuthError(status int, b []byte) *OAuthError {
+	var body struct {
+		Error            string `json:"error"`
+		ErrorDescription string `json:"error_description"`
+	}
+	oe := &OAuthError{StatusCode: status}
+	if json.Unmarshal(b, &body) == nil && body.Error != "" {
+		oe.Code, oe.Description = body.Error, body.ErrorDescription
+	} else {
+		oe.Description = string(b)
+	}
+	return oe
+}
+
 // TokenSet is the response of the /oauth/token endpoint (authorization_code and
 // refresh_token grants). RefreshToken and IDToken are present depending on the
 // granted scopes and flow.
@@ -131,17 +148,7 @@ func decodeTokenSet(resp *http.Response) (*TokenSet, error) {
 		return nil, fmt.Errorf("read token response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		var body struct {
-			Error            string `json:"error"`
-			ErrorDescription string `json:"error_description"`
-		}
-		oe := &OAuthError{StatusCode: resp.StatusCode}
-		if json.Unmarshal(b, &body) == nil && body.Error != "" {
-			oe.Code, oe.Description = body.Error, body.ErrorDescription
-		} else {
-			oe.Description = string(b)
-		}
-		return nil, oe
+		return nil, newOAuthError(resp.StatusCode, b)
 	}
 	var ts TokenSet
 	if err := json.Unmarshal(b, &ts); err != nil {

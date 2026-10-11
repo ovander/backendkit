@@ -164,3 +164,18 @@ func TestServiceToken_ExpiresInCountedFromTheRequest(t *testing.T) {
 		t.Errorf("expiry %v is later than request start + expires_in (%v) (%v)", got, limit, err)
 	}
 }
+
+// ServiceToken ignores the response's scope field, whatever its type.
+func TestServiceToken_IgnoresResponseScope(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "svc-tok", "expires_in": 3600, "scope": 42})
+	}))
+	t.Cleanup(srv.Close)
+	c, err := socrate.NewClient(socrate.ClientConfig{BaseURL: srv.URL, ClientID: "cid", ClientSecret: "test-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok, _, err := c.ServiceToken(context.Background()); err != nil || tok != "svc-tok" {
+		t.Errorf("ServiceToken = %q, %v", tok, err)
+	}
+}

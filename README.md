@@ -109,6 +109,7 @@ to Socrate (`bff`, `pep`) and `ailang` for `aigateway`.
 | Guarantee a tenant on tenant-scoped routes | [`httpware.RequireTenant`](#httpware) |
 | Gate routes by role/permission | [`httpware.RBAC`](#httpware) |
 | Reserve a route group to a service account by OAuth scope | [`jwtauth.RequireScopes`](#jwtauth) |
+| Get a service-account token carrying a given scope, to call such a route | [`socrate.Client.ServiceTokenWithScopes`](#socrate) |
 | Gate routes or features by commercial plan | [`tiering`](#tiering) |
 | Return consistent JSON errors | [`apierror`](#apierror) |
 | Call Socrate to manage users, apps, tokens, or security | [`socrate`](#socrate) |
@@ -536,7 +537,14 @@ forwards the request id (`ctxutil.GetRequestID`, set by `httpware.RequestID`) as
 `ServiceToken(ctx)` returns that token and its expiry, for calling another service that accepts
 Socrate tokens as the application itself. When that service refuses the token with 401 before its
 expiry (a token revoked at Socrate), `InvalidateServiceToken()` drops the cached token so the next
-call exchanges a new one.
+call exchanges a new one. `ServiceToken` requests no scope, so Socrate issues its default (`api`).
+`ServiceTokenWithScopes(ctx, scopes...)` requests the given scopes instead, for a service whose
+routes have `jwtauth.RequireScopes`: it is cached per scope set (order and duplicates do not matter,
+at most 16 sets, least recently used dropped first), separately from `ServiceToken`'s token, and
+`InvalidateServiceToken()` clears both. It refuses an empty list or a malformed scope without a
+network call, and returns an error matching `ErrScopeNotGranted` when Socrate answers
+`invalid_scope` (the error is also an `*OAuthError`) or grants fewer scopes than requested. Socrate
+issues exactly the scopes requested, without `api`, so list `api` too when the token needs it.
 
 > **`AppID` is required for all service-account methods.** Service-account tokens carry
 > `sub=app:{id}` and the Socrate admin routes cannot resolve the app ID at runtime without it.
@@ -562,6 +570,13 @@ inv, err := client.InviteUserAsService(ctx, socrate.ServiceInviteRequest{
     Email: "new@example.com",
     Role:  "editor",
 })
+
+// A token carrying an application-defined scope, to call another service's
+// worker API (the scope is in this client's allowed_scopes, Socrate v1.14.0+):
+tok, _, err := client.ServiceTokenWithScopes(ctx, "swingdrift:worker")
+if errors.Is(err, socrate.ErrScopeNotGranted) {
+    // the scope is not registered for this client in Socrate
+}
 
 // Conflict handling:
 if errors.Is(err, socrate.ErrUserAlreadyExists) {
@@ -679,7 +694,8 @@ auth := jwtauth.New(jwksURL, issuer, logger,
   Called with no non-empty scope it rejects every token (fail closed). Without `RequireScopes`, a
   malformed `scope`/`scp` claim is ignored, so existing callers see no change. Socrate v1.14.0
   or later issues application-defined scopes such as `my-api:worker` (`<namespace>:<name>`) to
-  the clients whose `allowed_scopes` list them, on every grant. A service account's
+  the clients whose `allowed_scopes` list them, when they request them (the calling service
+  uses `socrate.Client.ServiceTokenWithScopes`). A service account's
   (`client_credentials`) token has `sub` = `app:<id>`, no `role` or `app_roles`, and `aud`
   starting with its own client ID; since Socrate v1.13.0, with `AUDIENCE_MODE=dual`, its
   registered audiences follow, as for user tokens.
@@ -1192,7 +1208,8 @@ scripts/conformance-local.sh
 | **Service-account call errors with "AppID must be set"** | Set `AppID` in `ClientConfig` (`SOCRATE_APP_ID`). The `/api/admin/apps` lookup needs a human-admin JWT, so a service token cannot resolve the app ID at runtime. |
 | **Rate limiter never limits** | `RateLimiter` keys on the tenant UUID and lets requests through when none is present. Place `rl.Handler` **after** `auth.Handler` so `tenant_id` is already in context. |
 | **`tiering.Gate` always allows / always denies** | The gate reads the plan from context (`ctxutil.GetUserPlan`); confirm auth runs before the gate and that your `PlanRegistry` contains the plan names you check. Unknown plans normalise to the lowest tier. |
-| **`403 insufficient_scope` from `jwtauth`** | The middleware has `RequireScopes` and the token lacks one of the scopes (the `WWW-Authenticate` header names them). Grant the scope to the calling client in Socrate (`allowed_scopes`; an application-defined `<namespace>:<name>` scope needs Socrate v1.14.0 or later), then check that the token's `scope` claim carries it. |
+| **`403 insufficient_scope` from `jwtauth`** | The middleware has `RequireScopes` and the token lacks one of the scopes (the `WWW-Authenticate` header names them). Grant the scope to the calling client in Socrate (`allowed_scopes`; an application-defined `<namespace>:<name>` scope needs Socrate v1.14.0 or later), have the caller request it (`ServiceTokenWithScopes`; `ServiceToken` requests none and gets `api`), then check that the token's `scope` claim carries it. |
+| **`ServiceTokenWithScopes` returns `ErrScopeNotGranted`** | Socrate answered `invalid_scope` (the scope is not in the client's `allowed_scopes`, or Socrate is older than v1.14.0 for an application-defined scope), or its response granted fewer scopes than requested. Register the scope for the client in Socrate. |
 | **BFF answers 403 on `POST`/`PUT`/`DELETE`** | The request lacks the session's CSRF token in `X-CSRF-Token`. Give the SPA the token (for example in your `/bff/session` response) and send it on every unsafe request. |
 | **Every `pep` check answers 401** | `pep` runs before `jwtauth`, so there is no user token in context. Mount `auth.Handler` first. |
 | **`pep` answers `503 policy_unavailable` at startup** | Socrate's decision point was unreachable before any decision told the process the mode. Check `SOCRATE_BASE_URL`, `SOCRATE_CLIENT_SECRET` and `SOCRATE_APP_ID`; set `FailOpenWhenModeUnknown` only if proceeding is acceptable while the mode is unknown. |
