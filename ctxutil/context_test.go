@@ -2,6 +2,7 @@ package ctxutil_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/google/uuid"
@@ -148,5 +149,26 @@ func TestGetAudiences_Missing(t *testing.T) {
 	}
 	if got := ctxutil.GetAudiences(ctxutil.WithAudiences(context.Background(), nil)); got != nil {
 		t.Errorf("expected nil for an empty set, got %q", got)
+	}
+}
+
+func TestScopes(t *testing.T) {
+	ctx := context.Background()
+	if ctxutil.GetScopes(ctx) != nil {
+		t.Fatal("scopes on an empty context")
+	}
+	in := []string{"api", "worker"}
+	ctx = ctxutil.WithScopes(ctx, in)
+	in[0] = "changed"
+	got := ctxutil.GetScopes(ctx)
+	if !slices.Equal(got, []string{"api", "worker"}) {
+		t.Fatalf("GetScopes = %q", got)
+	}
+	got[1] = "changed"
+	if again := ctxutil.GetScopes(ctx); again[1] != "worker" {
+		t.Errorf("GetScopes returned the stored slice: %q", again)
+	}
+	if ctxutil.GetScopes(ctxutil.WithScopes(context.Background(), nil)) != nil {
+		t.Error("empty scopes must read as nil")
 	}
 }
