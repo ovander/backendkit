@@ -15,7 +15,6 @@ All notable changes to backendkit are documented here. Format:
   writer, before any identity is injected; with no non-empty scope it rejects every token. A
   malformed `scope`/`scp` claim only matters with `RequireScopes` (it is then a 403): callers that do
   not require scopes see no change.
-
 - **`conformance`: what Socrate really issues, as fixtures for your Socrate mock, checked nightly
   against a live Socrate** (#101). Each consumer built its own Socrate mock and found the
   differences in production. The new package (no other backendkit import) embeds the claim sets
@@ -34,6 +33,14 @@ All notable changes to backendkit are documented here. Format:
     workflow does the same nightly, on demand, and on pull requests that change the suite. It is
     informational, not a required check. A failed nightly or manual run opens or updates an issue
     labelled `conformance`.
+
+### Fixed
+- **`WithPendingLoginManagedSchema` now also checks the `UPDATE` privilege.** `Put` is an
+  `INSERT … ON CONFLICT DO UPDATE`, which needs `UPDATE` on the table, but the start-up check
+  verified only `SELECT`, `INSERT` and `DELETE`. A role granted exactly those three passed the
+  check and then failed every sign-in. Such a role is now refused at start-up, naming `UPDATE`;
+  grant it `SELECT, INSERT, UPDATE, DELETE`, as for the session table. Found while moving the
+  monitoring console to the managed schema.
 
 ## [1.25.0] - 2026-10-10
 

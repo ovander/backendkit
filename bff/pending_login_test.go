@@ -198,6 +198,29 @@ func TestPostgresPendingLoginStore_ManagedSchema(t *testing.T) {
 	}
 }
 
+// Put is an INSERT … ON CONFLICT DO UPDATE, so a role without UPDATE cannot
+// store a login: the managed check must refuse it at start-up, naming the
+// privilege, instead of letting every sign-in fail.
+func TestPostgresPendingLoginStore_ManagedSchemaNeedsUpdate(t *testing.T) {
+	ctx := context.Background()
+	_, db := pgStore(t, time.Hour, time.Hour)
+	table := fmt.Sprintf("bff_test_pending_grant_%d", time.Now().UnixNano())
+	t.Cleanup(func() { _, _ = db.Exec("DROP TABLE IF EXISTS " + table) })
+	if _, err := db.Exec("CREATE TABLE " + table + " (state text PRIMARY KEY, data bytea NOT NULL, created_at timestamptz NOT NULL)"); err != nil {
+		t.Fatal(err)
+	}
+	store := db
+	if isSuperuser(t, db) {
+		store = limitedRoleDB(t, db, table, "SELECT, INSERT, DELETE")
+	} else if _, err := db.Exec("REVOKE UPDATE ON " + table + " FROM CURRENT_USER"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := NewPostgresPendingLoginStore(ctx, store, testKey, 0, WithPendingLoginTable(table), WithPendingLoginManagedSchema())
+	if err == nil || !strings.Contains(err.Error(), "UPDATE") {
+		t.Fatalf("missing UPDATE privilege: %v, want a start-up error naming it", err)
+	}
+}
+
 func TestNewPostgresPendingLoginStore_Validation(t *testing.T) {
 	ctx := context.Background()
 	if _, err := NewPostgresPendingLoginStore(ctx, nil, testKey, 0); err == nil {

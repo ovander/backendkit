@@ -164,7 +164,8 @@ func WithPendingLoginErrorHandler(f func(op string, err error)) PendingLoginStor
 // WithPendingLoginManagedSchema tells NewPostgresPendingLoginStore that the
 // table is created by the caller's own migrations, as for
 // WithPostgresManagedSchema: it runs no DDL, checks the columns and that the
-// role holds SELECT, INSERT and DELETE. The migration must create:
+// role holds SELECT, INSERT, UPDATE and DELETE (Put is an INSERT … ON CONFLICT
+// DO UPDATE, which needs UPDATE). The migration must create:
 //
 //	CREATE TABLE <table> (
 //		state      text        PRIMARY KEY,
@@ -227,7 +228,7 @@ func NewPostgresPendingLoginStore(ctx context.Context, db *sql.DB, key []byte, t
 		return nil, fmt.Errorf("bff: pending login store: %w", err)
 	}
 	if s.managed {
-		if err := checkTable(ctx, db, s.table, "state, data, created_at", "SELECT", "INSERT", "DELETE"); err != nil {
+		if err := checkTable(ctx, db, s.table, "state, data, created_at", "SELECT", "INSERT", "UPDATE", "DELETE"); err != nil {
 			return nil, fmt.Errorf("bff: pending login store: managed table %s: %w", s.table, err)
 		}
 		return s, nil
