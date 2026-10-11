@@ -69,6 +69,27 @@ type SocrateClaims struct {
 	Name  string `json:"name,omitempty"`
 
 	jwt.RegisteredClaims
+
+	// scopes holds the token's scopes, read by validateToken from the scope
+	// and scp claims of the verified payload (see Scopes); scopesErr records a
+	// scope or scp claim of an unexpected JSON type.
+	scopes    []string
+	scopesErr error
+}
+
+// Scopes returns the token's OAuth scopes: the space-separated scope claim
+// (RFC 8693 §4.2, RFC 9068 §2.2.3; what Socrate emits) and the scp claim (a
+// JSON array of strings, or a single space-separated string, as other issuers
+// emit it). When both are present the result is their union, in token order
+// (scope first), without duplicates or empty values. It returns nil when the
+// token carries neither claim, when a claim has an unexpected JSON type, and
+// for claims not produced by the middleware's validation. The result is a
+// copy.
+func (c *SocrateClaims) Scopes() []string {
+	if c == nil || len(c.scopes) == 0 {
+		return nil
+	}
+	return append([]string(nil), c.scopes...)
 }
 
 // jwksKey represents a single key from a JWKS endpoint.
@@ -104,9 +125,14 @@ type Middleware struct {
 	// An empty tenantClaim with tenantClaimSet rejects every token.
 	tenantClaim    string
 	tenantClaimSet bool
-	logger         *logrus.Entry
-	httpClient     *http.Client
-	cacheTTL       time.Duration
+	// requiredScopes are the scopes every token must carry when
+	// requiredScopesSet (RequireScopes); an empty set with requiredScopesSet
+	// rejects every token.
+	requiredScopes    []string
+	requiredScopesSet bool
+	logger            *logrus.Entry
+	httpClient        *http.Client
+	cacheTTL          time.Duration
 
 	// leeway is the clock-skew tolerance applied to time-based claim validation
 	// (exp/nbf/iat). See WithLeeway.
@@ -200,7 +226,7 @@ func WithAudiences(expectedAudiences ...string) Option {
 
 // WithErrorWriter sets how the middleware writes its 401 responses (missing
 // or invalid bearer, invalid or expired token, revoked token, invalid tenant
-// claim). Pass apierror.ProblemWriter for RFC 9457 application/problem+json.
+// claim) and its 403 response (a required scope missing, see RequireScopes). Pass apierror.ProblemWriter for RFC 9457 application/problem+json.
 // Without it, or with nil, the default apierror JSON envelope is written,
 // byte-for-byte as before.
 func WithErrorWriter(write apierror.ErrorWriter) Option {
@@ -250,6 +276,36 @@ func WithRevocationCheck(fn RevocationChecker) Option {
 func WithTenantClaim(name string) Option {
 	return func(m *Middleware) {
 		m.tenantClaim, m.tenantClaimSet = strings.TrimSpace(name), true
+	}
+}
+
+// RequireScopes makes the middleware accept a token only when it carries every
+// one of scopes (see SocrateClaims.Scopes for how the scope and scp claims are
+// read). A valid token that lacks one is rejected with 403 (RFC 6750 §3.1
+// insufficient_scope) through the configured error writer, with a
+// WWW-Authenticate header naming the required scopes; the identity values are
+// not injected. A token whose scope or scp claim has an unexpected JSON type
+// is rejected the same way.
+//
+// Use it on the Middleware of a route group that only a service account may
+// call, for example a worker API that requires its own scope:
+//
+//	worker := jwtauth.New(jwksURL, issuer, logger,
+//	    jwtauth.WithAudience("my-api"),
+//	    jwtauth.RequireScopes("my-api:worker"))
+//
+// Empty strings and duplicates are ignored. Fail closed: when no non-empty
+// scope is given, every token is rejected (and New logs an error) rather than
+// the check being disabled. The last RequireScopes passed to New wins.
+func RequireScopes(scopes ...string) Option {
+	return func(m *Middleware) {
+		var set []string
+		for _, sc := range scopes {
+			if sc = strings.TrimSpace(sc); sc != "" && !slices.Contains(set, sc) {
+				set = append(set, sc)
+			}
+		}
+		m.requiredScopes, m.requiredScopesSet = set, true
 	}
 }
 
@@ -323,6 +379,9 @@ func New(jwksURL, issuer string, logger *logrus.Entry, opts ...Option) *Middlewa
 	if m.audienceSet && len(m.audiences) == 0 && logger != nil {
 		logger.Error("jwtauth: WithAudiences was given no audience — every token is rejected")
 	}
+	if m.requiredScopesSet && len(m.requiredScopes) == 0 && logger != nil {
+		logger.Error("jwtauth: RequireScopes was given no scope — every token is rejected")
+	}
 	if m.tenantClaimSet && m.tenantClaim == "" && logger != nil {
 		logger.Error("jwtauth: WithTenantClaim was given an empty claim name — every token is rejected")
 	}
@@ -359,6 +418,18 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 				m.writeError(w, r, apierror.Unauthorized("token revoked"))
 				return
 			}
+		}
+
+		if m.requiredScopesSet {
+			if missing := m.missingScopes(claims); missing != nil {
+				m.logger.WithField("missing_scopes", missing).Warn("token lacks a required scope")
+				w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer error="insufficient_scope", scope=%q`, strings.Join(m.requiredScopes, " ")))
+				m.writeError(w, r, apierror.Forbidden("insufficient scope"))
+				return
+			}
+		}
+		if sc := claims.Scopes(); len(sc) > 0 {
+			ctx = ctxutil.WithScopes(ctx, sc)
 		}
 
 		// tenant_id — only present when the server is configured to issue it.
@@ -495,6 +566,7 @@ func (m *Middleware) validateToken(tokenString string) (*SocrateClaims, error) {
 	if err != nil || !tok.Valid {
 		return nil, fmt.Errorf("token invalid")
 	}
+	claims.scopes, claims.scopesErr = scopeClaims(tokenString)
 	if m.tenantClaimSet {
 		tenant, err := stringClaim(tokenString, m.tenantClaim)
 		if err != nil {
@@ -503,6 +575,80 @@ func (m *Middleware) validateToken(tokenString string) (*SocrateClaims, error) {
 		claims.TenantID = tenant
 	}
 	return claims, nil
+}
+
+// missingScopes returns the required scopes the token lacks, every required
+// scope when its scope claims are malformed, and a non-nil empty slice when
+// RequireScopes was given none (fail closed); nil means the token passes.
+func (m *Middleware) missingScopes(claims *SocrateClaims) []string {
+	if len(m.requiredScopes) == 0 {
+		return []string{}
+	}
+	if claims.scopesErr != nil {
+		return m.requiredScopes
+	}
+	var missing []string
+	for _, sc := range m.requiredScopes {
+		if !slices.Contains(claims.scopes, sc) {
+			missing = append(missing, sc)
+		}
+	}
+	return missing
+}
+
+// scopeClaims reads the scope (space-separated string) and scp (array of
+// strings, or a space-separated string) claims of an already-verified token
+// and returns their union. Like stringClaim, it decodes the payload a second
+// time because the two claims have shapes SocrateClaims cannot type, and a
+// malformed claim must not fail validation for callers that never look at
+// scopes: the error is returned for RequireScopes to act on.
+func scopeClaims(tokenString string) ([]string, error) {
+	parts := strings.Split(tokenString, ".")
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("token invalid")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, fmt.Errorf("token payload: %w", err)
+	}
+	var all struct {
+		Scope json.RawMessage `json:"scope"`
+		Scp   json.RawMessage `json:"scp"`
+	}
+	if err := json.Unmarshal(payload, &all); err != nil {
+		return nil, fmt.Errorf("token payload: %w", err)
+	}
+	var out []string
+	add := func(values ...string) {
+		for _, v := range values {
+			for _, f := range strings.Fields(v) {
+				if !slices.Contains(out, f) {
+					out = append(out, f)
+				}
+			}
+		}
+	}
+	for _, c := range []struct {
+		name     string
+		raw      json.RawMessage
+		arrayToo bool
+	}{{"scope", all.Scope, false}, {"scp", all.Scp, true}} {
+		if len(c.raw) == 0 || strings.TrimSpace(string(c.raw)) == "null" {
+			continue
+		}
+		var single string
+		if err := json.Unmarshal(c.raw, &single); err == nil {
+			add(single)
+			continue
+		}
+		var list []string
+		if c.arrayToo && json.Unmarshal(c.raw, &list) == nil {
+			add(list...)
+			continue
+		}
+		return nil, fmt.Errorf("claim %q has an unexpected type", c.name)
+	}
+	return out, nil
 }
 
 // stringClaim returns the named claim of an already-verified token: "" when
