@@ -19,6 +19,16 @@ All notable changes to backendkit are documented here. Format:
   response `scope` lacking a requested scope, matches `ErrScopeNotGranted` (`invalid_scope` is
   also an `*OAuthError`). `InvalidateServiceToken` now also drops the scoped tokens.
 
+### Changed
+- Docs: the README, `docs/CLIENT-INTEGRATION.md`, `docs/MIGRATING-TO-SOCRATE.md` and
+  `CONTRIBUTING.md` follow the current code and Socrate v1.14: what a service account's
+  (`client_credentials`) token carries (`sub` = `app:<id>`, `scope`, `aud` under
+  `AUDIENCE_MODE=dual` since Socrate v1.13.0), `RequireScopes` with application-defined scopes
+  (Socrate v1.14.0 or later), `RequireTenantWith`, `KeyedRateLimiter` and problem details in the
+  package tables, the BFF example on `bff.PendingLoginStore`, a non-compiling `apierror` snippet
+  fixed, the CI job names, and a `bff.PendingLogin` doc comment that named a non-existent
+  `SafeRedirect` (it is `SanitizeReturnTo`).
+
 ## [1.26.1] - 2026-10-11
 
 Patch release on the **v1** line: `MemoryStore` keeps a logout tombstone for an hour, as
@@ -35,16 +45,6 @@ dropped.
   tombstoned session; `Sweep` drops tombstones older than that. Session IDs are random per sign-in,
   so only a write-back of the deleted session is affected. Found while moving the monitoring
   console to backendkit's stores.
-
-### Changed
-- Docs: the README, `docs/CLIENT-INTEGRATION.md`, `docs/MIGRATING-TO-SOCRATE.md` and
-  `CONTRIBUTING.md` follow the current code and Socrate v1.14: what a service account's
-  (`client_credentials`) token carries (`sub` = `app:<id>`, `scope`, `aud` under
-  `AUDIENCE_MODE=dual` since Socrate v1.13.0), `RequireScopes` with application-defined scopes
-  (Socrate v1.14.0 or later), `RequireTenantWith`, `KeyedRateLimiter` and problem details in the
-  package tables, the BFF example on `bff.PendingLoginStore`, a non-compiling `apierror` snippet
-  fixed, the CI job names, and a `bff.PendingLogin` doc comment that named a non-existent
-  `SafeRedirect` (it is `SanitizeReturnTo`).
 
 ## [1.26.0] - 2026-10-11
 
