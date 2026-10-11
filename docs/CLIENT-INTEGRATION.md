@@ -258,7 +258,7 @@ token without every listed scope gets **403** `insufficient_scope`. Socrate
 v1.14.0 or later issues such application-defined scopes (`<namespace>:<name>`)
 to the clients whose `allowed_scopes` list them, when they request them.
 
-On the calling side (backendkit later than v1.26.1):
+On the calling side (backendkit v1.27.0 or later):
 first register the scope in the calling client's `allowed_scopes` in Socrate
 (v1.14.0 or later), then request it with `ServiceTokenWithScopes`; the plain
 `ServiceToken` requests no scope and gets Socrate's default, `api`:

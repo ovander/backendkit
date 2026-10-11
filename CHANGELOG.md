@@ -6,6 +6,14 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+## [1.27.0] - 2026-10-11
+
+Minor release on the **v1** line: additive API only. `socrate.Client.ServiceTokenWithScopes`
+requests a service-account token carrying given scopes (for example an application-defined scope
+such as `swingdrift:worker`, granted in Socrate v1.14.0 or later), cached per scope set; a scope
+Socrate does not grant is `ErrScopeNotGranted`. The README and the integration guides follow the
+current code and Socrate v1.14. No changed signature and no changed default.
+
 ### Added
 - **`socrate.Client.ServiceTokenWithScopes` and `socrate.ErrScopeNotGranted`: a service-account
   token carrying given scopes.** `ServiceToken` requests no scope, so Socrate issues its default
@@ -858,7 +866,8 @@ are rejected. Confirm your Socrate server populates `aud` before enabling it in
 production. Making audience validation required-by-default is deferred to a future
 major (v2.0) and tracked separately.
 
-[Unreleased]: https://github.com/ovander/backendkit/compare/v1.26.1...HEAD
+[Unreleased]: https://github.com/ovander/backendkit/compare/v1.27.0...HEAD
+[1.27.0]: https://github.com/ovander/backendkit/compare/v1.26.1...v1.27.0
 [1.26.1]: https://github.com/ovander/backendkit/compare/v1.26.0...v1.26.1
 [1.26.0]: https://github.com/ovander/backendkit/compare/v1.25.0...v1.26.0
 [1.25.0]: https://github.com/ovander/backendkit/compare/v1.24.0...v1.25.0
