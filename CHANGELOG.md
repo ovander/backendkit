@@ -6,6 +6,13 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Security
+- **Toolchain Go 1.27.3** (the `toolchain` line in `go.mod`, CI and docs): Go 1.27.2's
+  `crypto/x509` trusts compromised intermediate certificates (GO-2026-6809), which
+  `govulncheck` reports through `socrate.Client.StreamSecurityEvents` (any TLS call). The `go`
+  line, the floor importers need, stays at 1.26.0; importers pick up the fix by building with
+  Go 1.27.3 or later. No API change.
+
 ## [1.27.0] - 2026-10-11
 
 Minor release on the **v1** line: additive API only. `socrate.Client.ServiceTokenWithScopes`
