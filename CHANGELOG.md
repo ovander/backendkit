@@ -13,6 +13,17 @@ All notable changes to backendkit are documented here. Format:
   line, the floor importers need, stays at 1.26.0; importers pick up the fix by building with
   Go 1.27.3 or later. No API change.
 
+### Changed
+- **CI: GitHub Actions on Node 24.** Node 20 actions are deprecated and removed from GitHub's
+  runners, so each workflow now uses:
+  - `actions/checkout@v6`, `actions/setup-go@v6` and `actions/upload-artifact@v6`;
+  - `actions/github-script@v8`;
+  - `golangci/golangci-lint-action@v9` (same inputs; golangci-lint is still built with the
+    job's Go);
+  - `softprops/action-gh-release@v3`.
+
+  No change to the library or its API.
+
 ## [1.27.0] - 2026-10-11
 
 Minor release on the **v1** line: additive API only. `socrate.Client.ServiceTokenWithScopes`

@@ -59,11 +59,11 @@ jobs:
       SOCRATE_REF: ${{ inputs.socrate_ref || 'main' }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           path: backendkit
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: ovander/go-oauth2
           ref: ${{ env.SOCRATE_REF }}
@@ -80,7 +80,7 @@ jobs:
           echo "Socrate $(git -C socrate rev-parse --short HEAD) ($SOCRATE_REF)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Go ${{ steps.go.outputs.socrate }} (Socrate)
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ steps.go.outputs.socrate }}
           cache: true
@@ -97,7 +97,7 @@ jobs:
           go build -o "$RUNNER_TEMP/socrate" ./cmd/server
 
       - name: Set up Go ${{ steps.go.outputs.backendkit }} (backendkit)
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ steps.go.outputs.backendkit }}
           cache: false
@@ -126,7 +126,7 @@ jobs:
 
       - name: Upload the Socrate log
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: socrate-server-log
           path: ${{ env.CONFORMANCE_WORKDIR }}/server.log
@@ -142,7 +142,7 @@ jobs:
     permissions:
       issues: write
     steps:
-      - uses: actions/github-script@v7
+      - uses: actions/github-script@v8
         env:
           SOCRATE_REF: ${{ inputs.socrate_ref || 'main' }}
         with:
