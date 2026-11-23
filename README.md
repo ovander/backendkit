@@ -127,7 +127,7 @@ to Socrate (`bff`, `pep`) and `ailang` for `aigateway`.
 
 - **Go 1.26.0 or later** to import the module (the `go` line in `go.mod`). The floor is the
   oldest supported Go release: a backendkit upgrade never forces a newer Go on its importers, and
-  CI builds and tests on the floor itself. backendkit is developed with Go 1.27.3 (the
+  CI builds and tests on the floor itself. backendkit is developed with Go 1.27.4 (the
   `toolchain` line).
 - **A Socrate server** for the packages that talk to it: `jwtauth`, `socrate`, `bff` and `pep`.
   They are written for Socrate's API and claims, not as a generic OAuth toolkit. The other
@@ -1068,7 +1068,7 @@ r.Get("/api/v1/version", buildinfo.Handler())
 
 // Or read the struct directly (adds GoVersion from runtime.Version()):
 info := buildinfo.Get()
-// {"version":"v1.2.3","buildTime":"...","gitCommit":"a1b2c3d","goVersion":"go1.27.2"}
+// {"version":"v1.2.3","buildTime":"...","gitCommit":"a1b2c3d","goVersion":"go1.27.4"}
 ```
 
 Full API: [pkg.go.dev/…/buildinfo](https://pkg.go.dev/github.com/ovander/backendkit/buildinfo).

@@ -7,6 +7,9 @@ All notable changes to backendkit are documented here. Format:
 ## [Unreleased]
 
 ### Security
+- **Toolchain Go 1.27.4**: Go 1.27.4 fixes GO-2026-6859 in `net/http`, which Go 1.27.3 still
+  carries. The `toolchain` line, CI and docs move to 1.27.4; the `go` line (1.26.0, the importer
+  floor) is unchanged.
 - **Toolchain Go 1.27.3** (the `toolchain` line in `go.mod`, CI and docs): Go 1.27.2's
   `crypto/x509` trusts compromised intermediate certificates (GO-2026-6809), which
   `govulncheck` reports through `socrate.Client.StreamSecurityEvents` (any TLS call). The `go`
