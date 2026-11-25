@@ -6,6 +6,14 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Fixed
+- **Conformance: the refresh-token fixture has Socrate's `fam` claim.** Since Socrate v1.15.0 a
+  refresh token carries `fam`, its family id (a UUID kept across rotations), so the nightly
+  conformance run failed on `refresh_token/authorization_code` (#130). The fixture now lists
+  `"fam": "<fam>"`; `Load` fills `<fam>` with a fresh UUID and `Match` requires one. A refresh
+  token from a Socrate older than v1.15.0 has no `fam` and no longer matches the fixture. No
+  other package changes; refresh tokens stay opaque to clients.
+
 ### Security
 - **Toolchain Go 1.27.4**: Go 1.27.4 fixes GO-2026-6859 in `net/http`, which Go 1.27.3 still
   carries. The `toolchain` line, CI and docs move to 1.27.4; the `go` line (1.26.0, the importer

@@ -387,7 +387,7 @@ func (r *resolver) value(kind, arg string) (any, error) {
 		return r.now.Add(ttl).Unix(), nil
 	case "expires_in":
 		return int64(r.ttl().Seconds()), nil
-	case "jti":
+	case "jti", "fam":
 		return uuid.NewString(), nil
 	case "kid":
 		if len(p.Keys) > 0 && p.Keys[0].ID != "" {

@@ -391,3 +391,32 @@ func TestFixtureFamiliesAgree(t *testing.T) {
 		}
 	}
 }
+
+// Socrate v1.15.0 refresh tokens carry fam, their family id (#130): Load
+// fills it with a UUID, and Match requires one.
+func TestRefreshTokenFamily(t *testing.T) {
+	claims, err := Load("refresh_token/authorization_code", Params{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fam, _ := claims["fam"].(string)
+	if !reUUID.MatchString(fam) {
+		t.Fatalf("fam = %v, want a UUID", claims["fam"])
+	}
+	if err := Match("refresh_token/authorization_code", claims, Params{}); err != nil {
+		t.Fatalf("Match of the loaded claims: %v", err)
+	}
+	for name, edit := range map[string]func(map[string]any){
+		"no fam":         func(c map[string]any) { delete(c, "fam") },
+		"fam not a UUID": func(c map[string]any) { c["fam"] = "family-1" },
+	} {
+		c := map[string]any{}
+		for k, v := range claims {
+			c[k] = v
+		}
+		edit(c)
+		if err := Match("refresh_token/authorization_code", c, Params{}); err == nil {
+			t.Errorf("%s: matched", name)
+		}
+	}
+}
