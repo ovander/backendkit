@@ -9,6 +9,7 @@
   ],
   "auth_time": "<auth_time>",
   "exp": "<refresh_exp>",
+  "fam": "<fam>",
   "iat": "<iat>",
   "iss": "<issuer>",
   "jti": "<jti>",

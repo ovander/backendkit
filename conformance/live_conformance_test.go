@@ -342,6 +342,11 @@ func TestConformanceAuthorizationCodeAndRefresh(t *testing.T) {
 	if refreshed["refresh_token"] == resp["refresh_token"] {
 		t.Error("the refresh token was not rotated")
 	}
+	// The rotated refresh token stays in its family.
+	_, rRefresh := l.verify(t, asString(refreshed["refresh_token"]))
+	if rRefresh["fam"] == nil || rRefresh["fam"] != refresh["fam"] {
+		t.Errorf("rotation changed the refresh-token family: %v → %v", refresh["fam"], rRefresh["fam"])
+	}
 
 	// The spent refresh token is inactive.
 	check(t, "introspection/inactive", l.introspect(t, l.plain, asString(resp["refresh_token"])), Params{})

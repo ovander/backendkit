@@ -60,6 +60,9 @@ type Params struct {
 	ClaimsNamespace string // <ns>; default DefaultClaimsNamespace
 	TokenVersion    int    // <token_version>; default 1
 	JKT             string // <jkt>
+	// Family is a refresh token's family id, <fam>: Socrate keeps it across
+	// the token's rotations. Load's default is a random UUID.
+	Family string
 
 	Now        time.Time     // <iat>, <nbf>; default time.Now()
 	AuthTime   time.Time     // <auth_time>; default Now
@@ -387,6 +390,8 @@ func (r *resolver) value(kind, arg string) (any, error) {
 		return r.now.Add(ttl).Unix(), nil
 	case "expires_in":
 		return int64(r.ttl().Seconds()), nil
+	case "fam":
+		return or(p.Family, uuid.NewString()), nil
 	case "jti":
 		return uuid.NewString(), nil
 	case "kid":

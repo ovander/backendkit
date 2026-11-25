@@ -391,3 +391,47 @@ func TestFixtureFamiliesAgree(t *testing.T) {
 		}
 	}
 }
+
+// Socrate v1.15.0 refresh tokens carry fam, their family id (#130): Load
+// fills it with a UUID, and Match requires one.
+func TestRefreshTokenFamily(t *testing.T) {
+	claims, err := Load("refresh_token/authorization_code", Params{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fam, _ := claims["fam"].(string)
+	if !reUUID.MatchString(fam) {
+		t.Fatalf("fam = %v, want a UUID", claims["fam"])
+	}
+	if err := Match("refresh_token/authorization_code", claims, Params{}); err != nil {
+		t.Fatalf("Match of the loaded claims: %v", err)
+	}
+	// Params.Family pins the family, as a mock rotating a refresh token needs.
+	const family = "0ed2cb05-39d7-4b5b-9f33-4a591c5ceb96"
+	pinned, err := Load("refresh_token/authorization_code", Params{Family: family})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pinned["fam"] != family {
+		t.Errorf("Load with Params.Family: fam = %v, want %s", pinned["fam"], family)
+	}
+	if err := Match("refresh_token/authorization_code", pinned, Params{Family: family}); err != nil {
+		t.Errorf("Match with the same family: %v", err)
+	}
+	if err := Match("refresh_token/authorization_code", claims, Params{Family: family}); err == nil {
+		t.Error("Match accepted another family than Params.Family")
+	}
+	for name, edit := range map[string]func(map[string]any){
+		"no fam":         func(c map[string]any) { delete(c, "fam") },
+		"fam not a UUID": func(c map[string]any) { c["fam"] = "family-1" },
+	} {
+		c := map[string]any{}
+		for k, v := range claims {
+			c[k] = v
+		}
+		edit(c)
+		if err := Match("refresh_token/authorization_code", c, Params{}); err == nil {
+			t.Errorf("%s: matched", name)
+		}
+	}
+}

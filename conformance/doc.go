@@ -62,6 +62,7 @@
 //	<exp>             Params.Now + Params.TTL; <refresh_exp>: + Params.RefreshTTL
 //	<expires_in>      Params.TTL in seconds
 //	<jti>, <kid>      a UUID (kid: the signing key's ID)
+//	<fam>             Params.Family (default a random UUID): a refresh token's family, kept across its rotations
 //	<token_version>   Params.TokenVersion
 //	<at_hash>         the OIDC at_hash of Params.AccessToken (random without it)
 //	<jkt>             Params.JKT, a JWK SHA-256 thumbprint
