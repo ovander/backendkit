@@ -256,7 +256,9 @@ func (m *matcher) rule(path, kind, arg string, got any) {
 		str(nil, "the nonce", p.Nonce)
 	case "tenant_id":
 		str(reUUID, "a UUID", p.TenantID)
-	case "jti", "kid", "fam":
+	case "fam":
+		str(reUUID, "a UUID", p.Family)
+	case "jti", "kid":
 		str(reUUID, "a UUID", "")
 	case "at_hash", "n":
 		str(reB64URL, "a base64url string", "")
