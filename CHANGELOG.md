@@ -6,6 +6,14 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+## [1.28.0] - 2026-11-26
+
+Minor release on the **v1** line: additive API only. The conformance fixtures match Socrate
+v1.15.0 and later (the refresh token's `fam` claim), with `conformance.Params.Family` to pin it;
+the toolchain is Go 1.27.4 (GO-2026-6809, GO-2026-6859), the `go` line, the importer floor, stays
+1.26.0; CI runs on Node 24 actions. No changed signature and no changed default. Importers rebuilt
+with Go 1.27.4 get the standard-library fixes whichever backendkit version they use.
+
 ### Fixed
 - **Conformance: the refresh-token fixture has Socrate's `fam` claim.** Since Socrate v1.15.0 a
   refresh token carries `fam`, its family id (a UUID kept across rotations), so the nightly
