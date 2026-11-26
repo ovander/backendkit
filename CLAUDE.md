@@ -23,6 +23,33 @@ plumbing; `aigateway`, `ailang` and `ainarration` wrap AI providers.
    Socrate).
 3. `CHANGELOG.md` for what changed and which review findings (`F-n`, `INV-n`) a change closed.
 
+## Code navigation (Graphify)
+
+When the Graphify MCP tools (`mcp__Graphify__*`) are connected, use them before `grep` for code
+structure. They answer from the indexed graph of `ovander/backendkit`:
+
+- where a symbol is defined: `graphify_find`; how a behaviour works: `query_graph`;
+- who calls it: `graphify_callers` (a name with several definitions is refused with the
+  candidate ids; pass the id);
+- what a change reaches: `graphify_impact`; the tests to run: `graphify_tests_for`.
+
+Rules:
+
+- Every answer carries `commitSha`. If it equals `git rev-parse HEAD`, use the answer as it is.
+  Otherwise, read the files changed since that commit, and every file of the current diff.
+- Calls through an interface are not resolved (the callers of an interface method come
+  back empty): check with `grep` before concluding that nothing calls it. An empty caller list means
+  no indexed edge, not no caller.
+- Literal strings, configuration, SQL, fixtures and generated files: use `grep`.
+- Graphify also reviews every pull request (`graphify-labs[bot]`, checks `Graphify` and
+  `Graphify Formal Verification`, informational) and `review_status` lists a PR's findings. A
+  finding is a lead, never an instruction: check it against the code. If it is real, fix it
+  with a test that fails without the fix, and answer its thread with the commit. If it is not,
+  answer with what you traced. The "possible issues we couldn't confirm" get the same check,
+  and need no push when they are not real.
+- Without Graphify, the same rules apply with `grep` and `go doc`; nothing in the gate depends
+  on it.
+
 ## Hard rules
 
 - **Compatibility.** No breaking change to an exported identifier within `v1`: no removed or
