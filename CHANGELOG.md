@@ -6,6 +6,11 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Changed
+
+- `CLAUDE.md`: code navigation with Graphify when its tools are connected (definitions,
+  callers, impact, tests), the limits of its graph, and how its pull request reviews are handled.
+
 ## [1.28.0] - 2026-11-26
 
 Minor release on the **v1** line: additive API only. The conformance fixtures match Socrate
