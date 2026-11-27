@@ -6,6 +6,18 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+### Added
+
+- **`bff.StepUp`: a step-up sign-in, built and checked the same way by every client.**
+  `AuthorizeParams` returns the `/oauth/authorize` parameters for a fresh sign-in (`prompt=login`,
+  `max_age=0`) and, with `RequireMFA`, a second factor (`acr_values=mfa`). `Satisfied(authTime, amr,
+  maxAge, now)` and `SatisfiedByContext` (for a service behind `jwtauth.Middleware`) report whether
+  the sign-in behind an access token is recent enough and, with `RequireMFA`, used a second
+  factor; an unknown `auth_time` never passes, and an `auth_time` more than `StepUpClockSkew` (one
+  minute) in the future is refused. Needs Socrate v1.16.2 for `max_age=0`, and its
+  `ACR_VALUES_MODE` for Socrate itself to refuse a sign-in without a second factor. Additive: new
+  exported `StepUp`, `StepUpClockSkew`; no other change.
+
 ### Changed
 
 - `CLAUDE.md`: code navigation with Graphify when its tools are connected (definitions,
