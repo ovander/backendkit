@@ -35,6 +35,8 @@ func TestStepUp_Satisfied(t *testing.T) {
 		{"at the limit", StepUp{}, now.Add(-five).Unix(), pwd, five, true},
 		{"too old", StepUp{}, now.Add(-five - time.Second).Unix(), pwd, five, false},
 		{"unknown auth_time", StepUp{}, 0, mfa, five, false},
+		// 0 is unknown, not 1970: refused even with a very long max age.
+		{"unknown auth_time, long max age", StepUp{}, 0, mfa, 100 * 365 * 24 * time.Hour, false},
 		{"negative max age", StepUp{}, now.Unix(), mfa, -time.Second, false},
 		{"slightly in the future", StepUp{}, now.Add(30 * time.Second).Unix(), pwd, five, true},
 		{"far in the future", StepUp{}, now.Add(2 * time.Minute).Unix(), pwd, five, false},
