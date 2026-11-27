@@ -6,6 +6,13 @@ All notable changes to backendkit are documented here. Format:
 
 ## [Unreleased]
 
+## [1.29.0] - 2026-11-27
+
+Minor release on the **v1** line: additive API only. `bff.StepUp` builds and checks a step-up
+sign-in (a fresh authentication, with a second factor if asked) the same way in every client; it
+needs Socrate v1.16.2 for `max_age=0`. No changed signature and no changed default; the `go`
+line stays 1.26.0.
+
 ### Added
 
 - **`bff.StepUp`: a step-up sign-in, built and checked the same way by every client.**
