@@ -1294,6 +1294,39 @@ func ListTeam(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
+### Ask for a fresh sign-in before a sensitive action (step-up)
+
+Before an export, a payment or a change of rights, ask the user to sign in again, with a second
+factor if you need one. `bff.StepUp` builds the request and checks the result, so every client
+does it the same way. In the BFF, add its parameters to the login redirect, for example on a
+`GET /bff/step-up` route that is otherwise your `/bff/login` handler:
+
+```go
+step := bff.StepUp{RequireMFA: true}
+for k, v := range step.AuthorizeParams() { // prompt=login, max_age=0, acr_values=mfa
+	q[k] = v
+}
+http.Redirect(w, r, socrateURL+"/oauth/authorize?"+q.Encode(), http.StatusFound)
+```
+
+The callback stores the new tokens in the session as for any login. The service that performs
+the action, behind `jwtauth.Middleware`, then checks the sign-in behind the access token; that
+check, not the request, is what protects the action:
+
+```go
+if !(bff.StepUp{RequireMFA: true}).SatisfiedByContext(r.Context(), 5*time.Minute, time.Now()) {
+	apierror.Forbidden("step_up_required").WriteJSON(w) // the front end sends the user to /bff/step-up
+	return
+}
+```
+
+`Satisfied` fails closed: an access token without `auth_time` never satisfies it, and
+`RequireMFA` needs `mfa` in `amr`. Socrate meets `max_age=0` with the sign-in on its login page
+from v1.16.2. It refuses a sign-in without a second factor (callback error
+`unmet_authentication_requirements`) only under its `ACR_VALUES_MODE=enforce`; whatever that mode,
+`Satisfied` refuses the token, and a user without MFA turned on cannot pass a `RequireMFA`
+step-up.
+
 ### Show the logged-in user's profile
 
 ```go

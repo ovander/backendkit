@@ -793,6 +793,13 @@ always has, and logs a start-up warning asking you to choose; managed may become
 future major version. The pending-login store has the same pair,
 `WithPendingLoginManagedSchema()` and `WithPendingLoginAutoSchema()`.
 
+**Step-up sign-in.** Before a sensitive action, `bff.StepUp{RequireMFA: true}` gives the
+parameters to add to the `/oauth/authorize` redirect (`AuthorizeParams`: `prompt=login`,
+`max_age=0`, `acr_values=mfa`). Its `Satisfied` / `SatisfiedByContext` check the sign-in behind the
+resulting access token: `auth_time` at most a given age (an unknown one never passes) and, with
+`RequireMFA`, `mfa` in `amr`. The [integration guide](docs/CLIENT-INTEGRATION.md#ask-for-a-fresh-sign-in-before-a-sensitive-action-step-up)
+shows both halves.
+
 **Pending logins across instances.** Between `/login` and the callback, the BFF keeps the PKCE
 verifier, the `LoginBinding` nonce and the return path under the OAuth state. A
 `PendingLoginStore` holds them: `Put` at `/login`, `Take` at the callback (returns and removes in
